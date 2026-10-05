@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.git
+data
+coverage
+test
+agent-tools
+uploads
+*.log

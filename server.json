@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.LAHutchins91/patent-mcp",
+  "title": "Patent by Ouroboros",
+  "description": "USPTO and EPO patent search and prior-art lookup for assistants. Not legal advice.",
+  "version": "1.0.0",
+  "websiteUrl": "https://github.com/LAHutchins91/patent-mcp",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/LAHutchins91/patent-mcp/main/logo.jpg",
+      "mimeType": "image/jpeg",
+      "sizes": ["1024x1024"],
+      "theme": "dark"
+    }
+  ],
+  "repository": {
+    "url": "https://github.com/LAHutchins91/patent-mcp",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://patent-mcp.vercel.app/mcp"
+    }
+  ]
+}
