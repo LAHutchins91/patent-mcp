@@ -77,10 +77,12 @@ Lawrence needs to supply:
 | `STRIPE_PRICE_MONTHLY` | Existing monthly price id |
 | `STRIPE_PRICE_YEARLY` | Existing yearly price id |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signature secret |
-| `STORAGE_BACKEND` | `memory` (default), `file`, or `http` |
+| `STORAGE_BACKEND` | `memory` (default), `file`, `http`, or `blob` |
 | `STORAGE_PATH` | JSON file used when the backend is `file` |
 | `STORAGE_URL` | GET/PUT URL for one JSON document when the backend is `http` |
 | `STORAGE_TOKEN` | Optional bearer token for that URL |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob read-write token. Vercel injects this for a linked store. Required when `STORAGE_BACKEND=blob` |
+| `STORAGE_BLOB_PATH` | Blob pathname for the account document. Default `patent/accounts.json` |
 
 Do not create Stripe products or prices in this app. Do not commit secrets.
 
@@ -105,15 +107,16 @@ OPS is free within the EPO fair-use policy. The server sends `grant_type=client_
 
 Patent tools are stateless searches of public offices. Trial and subscription state, OAuth clients, and tokens live in one JSON document behind `AccountStore`.
 
-- `memory` keeps that document in the process. It is the default and is what tests use. It does not survive a restart or a second serverless instance.
+- `memory` keeps that document in the process. It is the default and is what local tests use. It does not survive a restart or a second serverless instance.
 - `file` writes `STORAGE_PATH` (default `./data/patent-store.json`). Use it for Docker or a long-running Node process.
 - `http` GETs and PUTs the same document at `STORAGE_URL`. Point it at storage you already run. This server does not create a database.
+- `blob` stores the same document in Vercel Blob at `STORAGE_BLOB_PATH` (default `patent/accounts.json`). Set `STORAGE_BACKEND=blob` on Vercel. The Blob client uses `BLOB_READ_WRITE_TOKEN`, which Vercel injects when a Blob store is connected. Reads bypass the CDN cache. Writes send `ifMatch` and retry when another instance updated the document first.
 
-Last write wins if two instances update the document at once.
+OAuth clients, authorization codes, access tokens, and refresh tokens are fields in that document. The consent screen posts the authorization request with the approval; nothing about the grant is kept in process memory. Expired codes and refresh tokens are removed on each write.
 
 ## Deploy
 
-Vercel: the Express app is the default export of `api/index.ts`, and `vercel.json` rewrites every path to it. Set the environment variables above. Use `STORAGE_BACKEND=http` so OAuth and trial state survive across instances. Point the Stripe webhook at `https://<your-host>/billing/webhook`.
+Vercel: the Express app is the default export of `api/index.ts`. `vercel.json` sends every path to that function and bundles `logo.jpg` into it, so `/logo.jpg` is served by the app and repository files such as `/package.json` are not static assets. Set the environment variables above, including `STORAGE_BACKEND=blob`. Point the Stripe webhook at `https://<your-host>/billing/webhook`.
 
 Docker:
 

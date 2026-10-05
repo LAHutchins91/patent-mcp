@@ -51,7 +51,8 @@ export type AppOptions = {
 
 export function projectRoot(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  for (const candidate of [path.resolve(here, ".."), path.resolve(here, "..", "..")]) {
+  const candidates = [process.cwd(), path.resolve(here, ".."), path.resolve(here, "..", "..")];
+  for (const candidate of candidates) {
     if (existsSync(path.join(candidate, "logo.jpg"))) return candidate;
   }
   return path.resolve(here, "..");
@@ -245,7 +246,8 @@ export function createApp(options: AppOptions = {}) {
   const store = options.store ?? (() => {
     try {
       return createStoreFromEnv(env, fetchImpl);
-    } catch {
+    } catch (error) {
+      if ((env.STORAGE_BACKEND ?? "").toLowerCase() === "blob") throw error;
       return memoryStore();
     }
   })();
@@ -465,26 +467,38 @@ export function createApp(options: AppOptions = {}) {
       const code = String(req.body?.code ?? "");
       const verifier = String(req.body?.code_verifier ?? "");
       const redirectUri = String(req.body?.redirect_uri ?? "");
-      const record = state.codes.find((item) => item.code === code && item.clientId === client.clientId);
-      if (!record || record.redirectUri !== redirectUri || Date.parse(record.expiresAt) <= nowFn().getTime() || !pkceMatches(verifier, record.codeChallenge)) {
+      const preliminary = state.codes.find((item) => item.code === code && item.clientId === client.clientId);
+      if (!preliminary || preliminary.redirectUri !== redirectUri || Date.parse(preliminary.expiresAt) <= nowFn().getTime() || !pkceMatches(verifier, preliminary.codeChallenge)) {
         return res.status(400).json({ error: "invalid_grant" });
       }
-      const issued = issueToken(client.clientId, record.userId, record.scope, record.resource);
+      let issued: ReturnType<typeof issueToken> | undefined;
       await store.update((draft) => {
-        draft.codes = draft.codes.filter((item) => item.code !== code);
+        issued = undefined;
+        const index = draft.codes.findIndex((item) => item.code === code && item.clientId === client.clientId);
+        const record = index >= 0 ? draft.codes[index] : undefined;
+        if (!record || record.redirectUri !== redirectUri || Date.parse(record.expiresAt) <= nowFn().getTime() || !pkceMatches(verifier, record.codeChallenge)) return;
+        issued = issueToken(client.clientId, record.userId, record.scope, record.resource);
+        draft.codes.splice(index, 1);
         draft.tokens.push(issued.record);
       });
+      if (!issued) return res.status(400).json({ error: "invalid_grant" });
       return res.json(issued.response);
     }
     if (grant === "refresh_token") {
       const refresh = String(req.body?.refresh_token ?? "");
-      const record = state.tokens.find((item) => item.refreshToken === refresh && item.clientId === client.clientId && Date.parse(item.refreshExpiresAt) > nowFn().getTime());
-      if (!record) return res.status(400).json({ error: "invalid_grant" });
-      const issued = issueToken(client.clientId, record.userId, record.scope, record.resource);
+      const preliminary = state.tokens.find((item) => item.refreshToken === refresh && item.clientId === client.clientId && Date.parse(item.refreshExpiresAt) > nowFn().getTime());
+      if (!preliminary) return res.status(400).json({ error: "invalid_grant" });
+      let issued: ReturnType<typeof issueToken> | undefined;
       await store.update((draft) => {
-        draft.tokens = draft.tokens.filter((item) => item.refreshToken !== refresh);
+        issued = undefined;
+        const index = draft.tokens.findIndex((item) => item.refreshToken === refresh && item.clientId === client.clientId && Date.parse(item.refreshExpiresAt) > nowFn().getTime());
+        if (index < 0) return;
+        const record = draft.tokens[index];
+        issued = issueToken(client.clientId, record.userId, record.scope, record.resource);
+        draft.tokens.splice(index, 1);
         draft.tokens.push(issued.record);
       });
+      if (!issued) return res.status(400).json({ error: "invalid_grant" });
       return res.json(issued.response);
     }
     return res.status(400).json({ error: "unsupported_grant_type" });
