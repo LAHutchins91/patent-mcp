@@ -10,3 +10,4 @@ coverage/
 *.log
 agent-tools/
 uploads/
+public/
