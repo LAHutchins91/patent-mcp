@@ -34,7 +34,7 @@ ChatGPT, Claude, Gemini, Grok, and any other Streamable HTTP client: add the sam
 
 A new account includes 14 days of search access. After the trial, Pro continues through Stripe Checkout. The amount is shown by Stripe, not in this repository.
 
-`server.json` is the MCP Registry manifest (`io.github.LAHutchins91/patent-mcp`). Its icon is `https://raw.githubusercontent.com/LAHutchins91/patent-mcp/main/logo.jpg`. Before you publish the registry entry, set `remotes[0].url` and `websiteUrl` to the public origin. The file currently uses `https://patent-mcp.vercel.app/mcp` as the intended Vercel path.
+`server.json` is the MCP Registry manifest (`io.github.LAHutchins91/patent`). Its icon is `https://patent-mcp.vercel.app/logo.jpg`. Before you publish the registry entry, set `remotes[0].url` and `websiteUrl` to the public origin. The file currently uses `https://patent-mcp.vercel.app/mcp` as the intended Vercel path.
 
 ## Tools
 
