@@ -128,3 +128,7 @@ docker run --env-file .env -p 8787:8787 patent-mcp
 ## What was verified
 
 Locally, over Streamable HTTP: `tools/list` and each of the four tools, OAuth registration with PKCE, trial expiry, Stripe checkout request shape, and webhook signature verification. The USPTO host answered without a key (unauthorized). The EPO token host answered without consumer credentials. No live Stripe charge was made, and the server was not deployed to Vercel from this workspace.
+
+---
+
+More from Ouroboros: https://ouroborosapps.com
