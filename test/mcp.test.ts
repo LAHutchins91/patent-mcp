@@ -132,11 +132,12 @@ describe("Streamable HTTP tools", () => {
     closers.push(server.close);
     const listed = await mcp(server.url, "tools/list", {});
     expect(listed.status).toBe(200);
-    const names = (listed.body.result as { tools: Array<{ name: string; description: string }> }).tools.map((tool) => tool.name);
-    expect(names).toEqual(["search_patents", "get_patent", "find_patent_citations", "search_prior_art"]);
-    for (const tool of (listed.body.result as { tools: Array<{ description: string }> }).tools) {
-      expect(tool.description.toLowerCase()).toContain("not legal advice");
-    }
+    const tools = (listed.body.result as { tools: Array<{ name: string; description: string }> }).tools;
+    expect(tools.map((tool) => tool.name)).toEqual(["search_patents", "get_patent", "find_patent_citations", "search_prior_art"]);
+    for (const tool of tools) expect(tool.description.toLowerCase()).toContain("not legal advice");
+    const citations = tools.find((tool) => tool.name === "find_patent_citations");
+    expect(citations?.description).toContain("EPO citation search when configured");
+    expect(citations?.description).toContain("The PatentsView citation graph is paused");
 
     const denied = await mcp(server.url, "tools/call", { name: "search_patents", arguments: { keywords: "nucleotide" } });
     expect(denied.status).toBe(401);
@@ -166,6 +167,8 @@ describe("Streamable HTTP tools", () => {
     const html = await home.text();
     expect(html).toContain("/logo.jpg");
     expect(html).toContain("Patent by Ouroboros");
+    expect(html).toContain("Search USPTO records (EPO when a free key is added)");
+    expect(html).not.toContain("Search USPTO and EPO records");
     expect(html).toContain("Not legal advice");
     expect(html).not.toMatch(/\$\s?\d/);
   });

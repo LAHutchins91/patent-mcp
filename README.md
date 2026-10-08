@@ -43,7 +43,7 @@ A new account includes 14 days of search access. After the trial, Pro continues 
 - `find_patent_citations` — documents that cite a patent, and documents that patent cites
 - `search_prior_art` — an idea description in, the closest office records and their Google Patents links out
 
-Citation coverage is the USPTO grant document, USPTO office-action citations, and EPO citation search. The legacy PatentsView citation graph is not available: USPTO paused the PatentsView PatentSearch API when PatentsView moved to the Open Data Portal on 20 March 2026.
+Citation coverage is the USPTO grant document, USPTO office-action citations, and EPO citation search when configured. The PatentsView citation graph is paused: USPTO paused the PatentsView PatentSearch API when PatentsView moved to the Open Data Portal on 20 March 2026.
 
 ## Run locally
 

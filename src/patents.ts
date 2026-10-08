@@ -66,10 +66,18 @@ const USPTO_SEARCH = "https://api.uspto.gov/api/v1/patent/applications/search";
 const USPTO_CITATIONS = "https://api.uspto.gov/api/v1/patent/oa/oa_citations/v2/records";
 
 const STOP = new Set([
-  "about", "after", "also", "and", "are", "because", "been", "before", "between", "can", "could",
-  "does", "each", "for", "from", "have", "into", "its", "more", "not", "over", "such", "than",
-  "that", "the", "their", "them", "then", "there", "these", "this", "those", "through", "using",
-  "what", "when", "where", "which", "with", "would", "your", "method", "system", "device", "apparatus"
+  "about", "above", "across", "after", "allow", "allowed", "allowing", "allows", "also", "and",
+  "apart", "are", "because", "been", "before", "being", "below", "between", "both", "can", "cannot",
+  "could", "comprising", "comprise", "comprises", "did", "does", "doing", "done", "during", "each",
+  "for", "from", "gets", "got", "had", "has", "have", "held", "help", "helped", "helping", "helps",
+  "here", "hold", "holding", "holds", "include", "included", "includes", "including", "into", "its",
+  "just", "keep", "keeping", "keeps", "kept", "lets", "like", "made", "make", "makes", "making",
+  "many", "method", "more", "much", "not", "onto", "only", "other", "over", "provide", "provided",
+  "provides", "said", "says", "shall", "some", "such", "system", "than", "that", "the", "their",
+  "them", "then", "there", "thereby", "therein", "thereof", "these", "they", "this", "those",
+  "through", "under", "upon", "used", "uses", "using", "very", "via", "were", "what", "when",
+  "where", "wherein", "which", "while", "will", "with", "within", "without", "would", "your",
+  "device", "apparatus"
 ]);
 
 type Json = Record<string, unknown>;
@@ -131,7 +139,7 @@ export function keywordsFromIdea(idea: string): string[] {
     counts.set(word, (counts.get(word) ?? 0) + 1);
   }
   return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length || a[0].localeCompare(b[0]))
     .map(([word]) => word)
     .slice(0, 8);
 }
@@ -351,9 +359,10 @@ export function parseUsptoGrantXml(xml: string): { abstract?: string; claims: st
     const country = tagText(match[1], "country");
     const doc = tagText(match[1], "doc-number");
     if (!country || !doc) continue;
+    const kind = tagText(match[1], "kind");
     cited.push({
       patentNumber: doc,
-      publicationNumber: `${country}${doc}${tagText(match[1], "kind") ?? ""}`,
+      publicationNumber: publicationId({ country, doc, kind }),
       googlePatentsUrl: googlePatentsUrl(country, doc),
       source: "USPTO grant document"
     });
@@ -404,7 +413,10 @@ export function collectDocumentIds(node: unknown, out: Array<{ country: string; 
 }
 
 export function publicationId(part: { country: string; doc: string; kind?: string }): string {
-  return `${part.country}${part.doc}${part.kind ?? ""}`;
+  const country = part.country.trim().toUpperCase();
+  let doc = part.doc.trim();
+  if (country && doc.toUpperCase().startsWith(country)) doc = doc.slice(country.length).trim();
+  return `${country}${doc}${part.kind?.trim() ?? ""}`;
 }
 
 function flattenText(node: unknown): string {
@@ -678,7 +690,9 @@ export class PatentService {
     }
     const patents = primary ? [primary] : [];
     if (!patents.length && !warnings.length) {
-      warnings.push("No office returned a record for that number.");
+      warnings.push(!this.configured().epo && id.country !== "US"
+        ? "Non-US numbers need EPO_CONSUMER_KEY and EPO_CONSUMER_SECRET on the server."
+        : "No office returned a record for that number.");
     }
     return envelope(patents, warnings, sources);
   }
@@ -697,10 +711,17 @@ export class PatentService {
       throw new PatentInputError("Describe the idea in a sentence with at least two distinctive words.");
     }
     const cap = clampLimit(limit);
-    const primary = terms.slice(0, 4).join(" ");
-    let result = await this.search({ keywords: primary, limit: cap });
-    if (!result.patents.length && terms.length > 4) {
-      result = await this.search({ keywords: terms.slice(0, 6).join(" "), limit: cap });
+    const primary = terms.slice(0, 4);
+    let result = await this.search({ keywords: primary.join(" "), limit: cap });
+    const retryCount = primary.length >= 4 ? 3 : primary.length === 3 ? 2 : 0;
+    if (!result.patents.length && retryCount) {
+      const retry = await this.search({ keywords: terms.slice(0, retryCount).join(" "), limit: cap });
+      const warnings = [...result.warnings];
+      for (const warning of retry.warnings) if (!warnings.includes(warning)) warnings.push(warning);
+      result = { ...retry, warnings };
+    }
+    if (!result.patents.length && !result.warnings.length) {
+      result = { ...result, warnings: ["No office returned records for those terms."] };
     }
     const ranked = [...result.patents]
       .map((patent) => ({ ...patent, keywordOverlap: overlapScore(terms, patent) }))
@@ -723,8 +744,13 @@ export class PatentService {
 
   private async usptoSearch(input: SearchInput): Promise<PatentRecord[]> {
     const body = buildUsptoBody(input);
-    const payload = await this.usptoJson(USPTO_SEARCH, "POST", body);
-    return mapUsptoSearch(payload);
+    try {
+      const payload = await this.usptoJson(USPTO_SEARCH, "POST", body);
+      return mapUsptoSearch(payload);
+    } catch (error) {
+      if (error instanceof PatentSourceError && error.message.includes("returned 404")) return [];
+      throw error;
+    }
   }
 
   private async usptoGet(id: OfficeId): Promise<PatentRecord | undefined> {

@@ -78,7 +78,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
     "find_patent_citations",
     {
       title: "Find citing and cited patents",
-      description: "List documents cited by a patent and documents that cite it, using USPTO grant references, USPTO office-action citations, and EPO citation search. This is not the full PatentsView citation graph, which is paused. Not legal advice.",
+      description: "List documents cited by a patent and documents that cite it, using USPTO grant references, USPTO office-action citations, and EPO citation search when configured. The PatentsView citation graph is paused. Not legal advice.",
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: {
         patentNumber: z.string().trim().min(4).max(32).describe("Patent or publication number."),

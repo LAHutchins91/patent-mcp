@@ -155,7 +155,7 @@ export function homePage(options: { origin: string; user?: UserRecord; notice?: 
       <div>
         <p class="eyebrow">Public patent records</p>
         <h1>Patent by Ouroboros</h1>
-        <p class="lede">Search USPTO and EPO records from ChatGPT, Claude, Gemini, Grok, Cursor, or any Streamable HTTP assistant. Built for inventors, startup founders, patent agents and attorneys, and engineers who need to know whether an idea is already in the public record.</p>
+        <p class="lede">Search USPTO records (EPO when a free key is added) from ChatGPT, Claude, Gemini, Grok, Cursor, or any Streamable HTTP assistant. Built for inventors, startup founders, patent agents and attorneys, and engineers who need to know whether an idea is already in the public record.</p>
         ${banner}
       </div>
       <div class="logo-card"><img src="/logo.jpg" alt="Green ouroboros around a white lightbulb, with the word Patent"></div>
