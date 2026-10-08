@@ -10,7 +10,8 @@ import {
   overlapScore,
   parseUsptoGrantXml,
   PatentService,
-  PatentSourceError
+  PatentSourceError,
+  publicationId
 } from "../src/patents.js";
 import { grounded, usptoSample } from "./fixtures.js";
 
@@ -61,6 +62,73 @@ describe("patent office mapping", () => {
     const high = overlapScore(terms, { title: "Labeled nucleotide analogs for sequencing", abstract: "nucleic acids" });
     const low = overlapScore(terms, { title: "Chair leg", abstract: "furniture" });
     expect(high).toBeGreaterThan(low);
+  });
+
+  it("drops common verbs and stopwords from an idea", () => {
+    expect(keywordsFromIdea("a porous separator that keeps battery electrodes apart").slice(0, 4)).toEqual([
+      "electrodes",
+      "separator",
+      "battery",
+      "porous"
+    ]);
+  });
+
+  it("says a non-US number needs EPO credentials when they are missing", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return new Response("missing", { status: 404 });
+    };
+    const service = new PatentService({ fetchImpl, usptoApiKey: "test-key" });
+    const result = await service.getPatent("EP0351918");
+    expect(calls).toBe(0);
+    expect(result.patents).toEqual([]);
+    expect(result.warnings).toEqual(["Non-US numbers need EPO_CONSUMER_KEY and EPO_CONSUMER_SECRET on the server."]);
+  });
+
+  it("treats a USPTO search 404 as zero results", async () => {
+    const fetchImpl: typeof fetch = async () => new Response("missing", { status: 404 });
+    const service = new PatentService({ fetchImpl, usptoApiKey: "test-key" });
+    const result = await service.search({ keywords: "battery electrodes separator" });
+    expect(result.patents).toEqual([]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("retries prior art with the longest terms when USPTO returns 404", async () => {
+    const queries: string[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      const query = (JSON.parse(String(init?.body ?? "{}")) as { q?: string }).q ?? "";
+      queries.push(query);
+      if (query.includes("(porous)")) return new Response("missing", { status: 404 });
+      return Response.json(usptoSample);
+    };
+    const service = new PatentService({ fetchImpl, usptoApiKey: "test-key" });
+    const result = await service.priorArt("a porous separator that keeps battery electrodes apart");
+    expect(queries[0]).toContain("(electrodes) AND (separator) AND (battery) AND (porous)");
+    expect(queries[0]).not.toContain("keeps");
+    expect(queries[0]).not.toContain("apart");
+    expect(queries[1]).toBe("(electrodes) AND (separator) AND (battery)");
+    expect(result.patents.length).toBeGreaterThan(0);
+    expect(result.warnings.join(" ")).not.toMatch(/404/);
+    expect(result.queryTerms).not.toContain("keeps");
+    expect(result.queryTerms).not.toContain("apart");
+  });
+
+  it("returns an empty prior-art list and a warning when USPTO search stays 404", async () => {
+    const fetchImpl: typeof fetch = async () => new Response("missing", { status: 404 });
+    const service = new PatentService({ fetchImpl, usptoApiKey: "test-key" });
+    const result = await service.priorArt("a porous separator that keeps battery electrodes apart");
+    expect(result.patents).toEqual([]);
+    expect(result.warnings).toEqual(["No office returned records for those terms."]);
+  });
+
+  it("does not double the WO prefix on a PCT citation", () => {
+    expect(publicationId({ country: "WO", doc: "WO 2005/080928", kind: "A1" })).toBe("WO2005/080928A1");
+    expect(publicationId({ country: "EP", doc: "0351918", kind: "A1" })).toBe("EP0351918A1");
+    const xml = `<?xml version="1.0"?><us-patent-grant><us-references-cited><us-citation><patcit><document-id><country>WO</country><doc-number>WO 2005/080928</doc-number><kind>A1</kind></document-id></patcit></us-citation></us-references-cited></us-patent-grant>`;
+    const parsed = parseUsptoGrantXml(xml);
+    expect(parsed.cited[0]?.publicationNumber).toBe("WO2005/080928A1");
+    expect(parsed.cited[0]?.publicationNumber.includes("WOWO")).toBe(false);
   });
 
   it("does not invent a Google Patents link from an empty number", () => {
