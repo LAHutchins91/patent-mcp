@@ -677,9 +677,20 @@ export function createApp(options: AppOptions = {}) {
     }
   });
 
-  app.use((error: unknown, _req: Request, res: Response, _next: express.NextFunction) => {
-    const tooLarge = typeof error === "object" && error !== null && "type" in error && (error as { type?: string }).type === "entity.too.large";
-    if (!res.headersSent) res.status(tooLarge ? 413 : 400).json({ error: "Invalid or oversized request." });
+  app.use((error: unknown, req: Request, res: Response, _next: express.NextFunction) => {
+    const type = typeof error === "object" && error !== null && "type" in error ? (error as { type?: string }).type : undefined;
+    const tooLarge = type === "entity.too.large";
+    const badBody = typeof type === "string" && type.startsWith("entity.");
+    // Log the error class and message only: no headers, query, body, or stack, so tokens and codes stay out of logs.
+    const name = error instanceof Error ? (error.constructor?.name && error.constructor.name !== "Error" ? error.constructor.name : error.name) : typeof error;
+    const message = error instanceof Error ? error.message.slice(0, 300) : "";
+    console.error(JSON.stringify({ event: "route_error", method: req.method, path: req.path, name, message }));
+    if (res.headersSent) return;
+    if (tooLarge || badBody) {
+      res.status(tooLarge ? 413 : 400).json({ error: "Invalid or oversized request." });
+      return;
+    }
+    res.status(500).json({ error: "Something went wrong. Try again in a moment." });
   });
 
   function issueToken(clientId: string, userId: string, scope: string, resource: string) {

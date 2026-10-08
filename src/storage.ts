@@ -1,7 +1,7 @@
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { BlobNotFoundError, BlobPreconditionFailedError, get, put } from "@vercel/blob";
+import { BlobNotFoundError, BlobPreconditionFailedError, get, head, put } from "@vercel/blob";
 
 export const TRIAL_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -64,6 +64,15 @@ export type StoreState = {
 
 export const DEFAULT_BLOB_PATH = "patent/accounts.json";
 const BLOB_WRITE_ATTEMPTS = 5;
+const BLOB_FRESH_READ_ATTEMPTS = 3;
+
+/** Thrown when the bytes we can read never match the version Blob reports as current. */
+export class BlobStaleReadError extends Error {
+  constructor() {
+    super("Blob read did not match the current blob version.");
+    this.name = "BlobStaleReadError";
+  }
+}
 
 export function emptyState(): StoreState {
   return { users: [], clients: [], codes: [], tokens: [] };
@@ -192,6 +201,7 @@ export type BlobGetResult = {
 
 /** Enough of `@vercel/blob` for tests to stand in for the real client. */
 export type BlobStoreClient = {
+  head(pathname: string): Promise<{ etag: string; url: string } | null>;
   get(pathname: string, options: { access: "private"; useCache: false }): Promise<BlobGetResult>;
   put(
     pathname: string,
@@ -217,6 +227,15 @@ function blobFailure(error: unknown, name: string, type: new () => Error): boole
 function liveBlobClient(token: string | undefined): BlobStoreClient {
   const auth = token ? { token } : {};
   return {
+    async head(pathname) {
+      try {
+        const meta = await head(pathname, auth);
+        return { etag: meta.etag, url: meta.url };
+      } catch (error) {
+        if (blobFailure(error, "BlobNotFoundError", BlobNotFoundError)) return null;
+        throw error;
+      }
+    },
     get(pathname, options) {
       return get(pathname, { ...options, ...auth });
     },
@@ -226,18 +245,32 @@ function liveBlobClient(token: string | undefined): BlobStoreClient {
   };
 }
 
+/** Compare a GET response ETag with the API etag: ignore a weak prefix and surrounding quotes. */
+function sameEtag(a: string, b: string) {
+  const normalize = (value: string) => value.trim().replace(/^W\//, "").replace(/^"(.*)"$/, "$1");
+  return normalize(a) === normalize(b);
+}
+
+function logStorageWriteFailure(attempt: number, error: unknown) {
+  const name = error instanceof Error
+    ? (error.constructor?.name && error.constructor.name !== "Error" ? error.constructor.name : error.name)
+    : typeof error;
+  const message = error instanceof Error ? error.message.slice(0, 300) : "";
+  console.error(JSON.stringify({ event: "storage_write_failed", attempt, name, message }));
+}
+
 /**
  * Private Vercel Blob document. `BLOB_READ_WRITE_TOKEN` is read by the client
  * (Vercel injects it). Expired authorization codes and refresh tokens are
- * removed on every write. `ifMatch` plus a short retry keeps two instances
- * from dropping each other's update.
+ * removed on every write. Conditional writes use the ETag from `head()`, which
+ * is the Blob API version, and retry when another instance wins the race.
  */
 export function blobStore(pathname: string, client?: BlobStoreClient, token?: string): AccountStore {
   const blobs = client ?? liveBlobClient(token);
   let chain = Promise.resolve();
-  async function load(): Promise<{ state: StoreState; etag?: string }> {
+  async function load(source = pathname): Promise<{ state: StoreState; etag?: string }> {
     try {
-      const result = await blobs.get(pathname, { access: "private", useCache: false });
+      const result = await blobs.get(source, { access: "private", useCache: false });
       if (!result) return { state: emptyState() };
       const etag = result.blob?.etag || undefined;
       if (!result.stream) return { state: emptyState(), etag };
@@ -256,6 +289,23 @@ export function blobStore(pathname: string, client?: BlobStoreClient, token?: st
       throw error;
     }
   }
+  // Writes are conditional on the etag from head(), which comes from the Blob API rather than the CDN.
+  // The bytes must belong to that same version, otherwise we would overwrite newer data with a stale copy.
+  async function loadForWrite(): Promise<{ state: StoreState; etag?: string }> {
+    for (let attempt = 0; attempt < BLOB_FRESH_READ_ATTEMPTS; attempt += 1) {
+      const meta = await blobs.head(pathname);
+      if (!meta) return { state: emptyState() };
+      let source = pathname;
+      if (attempt > 0) {
+        const versioned = new URL(meta.url);
+        versioned.searchParams.set("v", meta.etag);
+        source = versioned.toString();
+      }
+      const loaded = await load(source);
+      if (loaded.etag !== undefined && sameEtag(loaded.etag, meta.etag)) return { state: loaded.state, etag: meta.etag };
+    }
+    throw new BlobStaleReadError();
+  }
   return {
     backend: "blob",
     async read() {
@@ -265,7 +315,7 @@ export function blobStore(pathname: string, client?: BlobStoreClient, token?: st
       const run = chain.then(async () => {
         let lastError: unknown;
         for (let attempt = 0; attempt < BLOB_WRITE_ATTEMPTS; attempt += 1) {
-          const loaded = await load();
+          const loaded = await loadForWrite();
           const draft = structuredClone(loaded.state);
           prune(draft);
           mutate(draft);
@@ -276,11 +326,12 @@ export function blobStore(pathname: string, client?: BlobStoreClient, token?: st
               allowOverwrite: true,
               addRandomSuffix: false,
               contentType: "application/json",
-              ifMatch: loaded.etag
+              ...(loaded.etag ? { ifMatch: loaded.etag } : {})
             });
             return structuredClone(draft);
           } catch (error) {
             lastError = error;
+            logStorageWriteFailure(attempt, error);
             if (!blobFailure(error, "BlobPreconditionFailedError", BlobPreconditionFailedError) || attempt === BLOB_WRITE_ATTEMPTS - 1) throw error;
           }
         }
