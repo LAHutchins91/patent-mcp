@@ -2,7 +2,7 @@
 
 Patent by Ouroboros is a remote MCP server for inventors, startup founders, patent agents and attorneys, and engineers who need to check whether an idea already appears in the public patent record.
 
-It searches the USPTO Open Data Portal and, when you add a free consumer key, EPO Open Patent Services. Google Patents is used only as a link. Every patent number in a tool result is copied from an office response. The server does not fill in numbers when an office does not answer.
+It searches United States patent records on the USPTO Open Data Portal. Google Patents is used only as a link. Every patent number in a tool result is copied from a USPTO response. The server does not fill in numbers when USPTO does not answer.
 
 **This is not legal advice.** It is not a substitute for a registered patent attorney or agent. A result is not an opinion on patentability, infringement, validity, or freedom to operate.
 
@@ -11,7 +11,7 @@ It searches the USPTO Open Data Portal and, when you add a free consumer key, EP
 - MCP server URL: `https://patent-mcp.vercel.app/mcp` (Streamable HTTP, OAuth sign-in)
 - Docs: https://ouroborosapps.com/docs/patent
 - Status: early access. Paste the URL into Claude, Cursor, Grok, or ChatGPT developer mode.
-- Coverage on the hosted server: USPTO Open Data Portal. EPO Open Patent Services is not turned on, so full claim-text search and EPO citation search are not available there.
+- Coverage on the hosted server: United States patents from the USPTO Open Data Portal.
 - Registry name: `io.github.LAHutchins91/patent`
 
 ## Connect
@@ -49,9 +49,9 @@ A new account includes 14 days of search access. After the trial, Pro continues 
 - `search_patents` — keywords, claim language, CPC class, assignee, inventor, and dates
 - `get_patent` — abstract, claims, status, family, and citations for one record
 - `find_patent_citations` — documents that cite a patent, and documents that patent cites
-- `search_prior_art` — an idea description in, the closest office records and their Google Patents links out
+- `search_prior_art` — an idea description in, the closest USPTO records and their Google Patents links out
 
-Citation coverage is the USPTO grant document, USPTO office-action citations, and EPO citation search when configured. The PatentsView citation graph is paused: USPTO paused the PatentsView PatentSearch API when PatentsView moved to the Open Data Portal on 20 March 2026.
+Citation coverage is the USPTO grant document and USPTO office-action citations. The PatentsView citation graph is paused: USPTO paused the PatentsView PatentSearch API when PatentsView moved to the Open Data Portal on 20 March 2026.
 
 ## Run locally
 
@@ -68,7 +68,7 @@ npm test
 npm run typecheck
 ```
 
-Tests call the public USPTO and EPO hosts. Office payloads that require keys are mocked. With `USPTO_API_KEY` or EPO consumer credentials in the environment, the live test uses those credentials instead of expecting the unauthenticated response.
+Tests call the public USPTO host. Office payloads that require a key are mocked. With `USPTO_API_KEY` in the environment, the live test uses that key instead of expecting the unauthenticated response.
 
 ## Environment
 
@@ -78,9 +78,9 @@ Lawrence needs to supply:
 | --- | --- |
 | `APP_BASE_URL` | Public origin used as the OAuth issuer and Stripe return URL |
 | `AUTH_SECRET` | Signs browser sessions. Required in production |
-| `USPTO_API_KEY` | Free USPTO Open Data Portal key, sent as `X-API-KEY` |
-| `EPO_CONSUMER_KEY` | EPO OPS consumer key |
-| `EPO_CONSUMER_SECRET` | EPO OPS consumer secret |
+| `USPTO_API_KEY` | USPTO Open Data Portal key, sent as `X-API-KEY`. This is the key the hosted server uses. |
+| `EPO_CONSUMER_KEY` | Leave unset on the hosted server. The unused client reads it only when a secret is set too. |
+| `EPO_CONSUMER_SECRET` | Leave unset on the hosted server. Search stays on United States patents from USPTO. |
 | `STRIPE_SECRET_KEY` | Existing Stripe secret |
 | `STRIPE_PRICE_MONTHLY` | Existing monthly price id |
 | `STRIPE_PRICE_YEARLY` | Existing yearly price id |
@@ -103,17 +103,9 @@ Do not create Stripe products or prices in this app. Do not commit secrets.
 
 Old PatentsView API keys do not work on the Open Data Portal.
 
-### EPO key
-
-1. Register at [developers.epo.org](https://developers.epo.org/).
-2. Create an app. EPO shows a consumer key and consumer secret.
-3. Set `EPO_CONSUMER_KEY` and `EPO_CONSUMER_SECRET`.
-
-OPS is free within the EPO fair-use policy. The server sends `grant_type=client_credentials` to `https://ops.epo.org/3.2/auth/accesstoken`.
-
 ## Accounts and storage
 
-Patent tools are stateless searches of public offices. Trial and subscription state, OAuth clients, and tokens live in one JSON document behind `AccountStore`.
+Patent tools are stateless searches of United States patents on the USPTO Open Data Portal. Trial and subscription state, OAuth clients, and tokens live in one JSON document behind `AccountStore`.
 
 - `memory` keeps that document in the process. It is the default and is what local tests use. It does not survive a restart or a second serverless instance.
 - `file` writes `STORAGE_PATH` (default `./data/patent-store.json`). Use it for Docker or a long-running Node process.
@@ -135,7 +127,7 @@ docker run --env-file .env -p 8787:8787 patent-mcp
 
 ## What was verified
 
-Locally, over Streamable HTTP: `tools/list` and each of the four tools, OAuth registration with PKCE, trial expiry, Stripe checkout request shape, and webhook signature verification. The USPTO host answered without a key (unauthorized). The EPO token host answered without consumer credentials. No live Stripe charge was made, and the server was not deployed to Vercel from this workspace.
+Locally, over Streamable HTTP: `tools/list` and each of the four tools, OAuth registration with PKCE, trial expiry, Stripe checkout request shape, and webhook signature verification. The USPTO host answered without a key (unauthorized). No live Stripe charge was made, and the server was not deployed to Vercel from this workspace.
 
 ---
 

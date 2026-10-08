@@ -162,7 +162,7 @@ export function homePage(options: { origin: string; user?: UserRecord; notice?: 
       <div>
         <p class="eyebrow">Public patent records</p>
         <h1>Patent by Ouroboros</h1>
-        <p class="lede">Search USPTO records (EPO when a free key is added) from ChatGPT, Claude, Gemini, Grok, Cursor, or any Streamable HTTP assistant. Built for inventors, startup founders, patent agents and attorneys, and engineers who need to know whether an idea is already in the public record.</p>
+        <p class="lede">Search US patents from the USPTO Open Data Portal in ChatGPT, Claude, Gemini, Grok, Cursor, or any Streamable HTTP assistant. Built for inventors, startup founders, patent agents and attorneys, and engineers who need to know whether an idea is already in the public record.</p>
         ${banner}
       </div>
       <div class="logo-card"><img src="/logo.jpg" alt="Green ouroboros around a white lightbulb, with the word Patent"></div>
@@ -185,7 +185,7 @@ export function homePage(options: { origin: string; user?: UserRecord; notice?: 
     </section>
     <section>
       <p class="eyebrow">Offices</p>
-      <p class="muted">Results come from the USPTO Open Data Portal and, when you add a free consumer key, EPO Open Patent Services. Google Patents is used only as a link. The legacy PatentsView search API has been paused since its March 2026 move to the Open Data Portal. Patent numbers are copied from office responses and are never filled in when an office does not answer.</p>
+      <p class="muted">Results are United States patent records from the USPTO Open Data Portal. Google Patents is used only as a link. The legacy PatentsView search API has been paused since its March 2026 move to the Open Data Portal. Patent numbers are copied from USPTO responses and are never filled in when USPTO does not answer.</p>
     </section>`);
 }
 
