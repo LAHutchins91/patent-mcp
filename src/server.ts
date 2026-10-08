@@ -574,6 +574,7 @@ export function createApp(options: AppOptions = {}) {
       const origin = originOf(req, env);
       const params = new URLSearchParams();
       params.set("mode", "subscription");
+      params.set("automatic_tax[enabled]", "true");
       params.set("line_items[0][price]", price);
       params.set("line_items[0][quantity]", "1");
       params.set("client_reference_id", user.id);
@@ -586,8 +587,10 @@ export function createApp(options: AppOptions = {}) {
       params.set("payment_method_collection", "always");
       params.set("success_url", `${origin}/?checkout=success`);
       params.set("cancel_url", `${origin}/?checkout=cancelled`);
-      if (user.stripeCustomerId) params.set("customer", user.stripeCustomerId);
-      else params.set("customer_email", user.email);
+      if (user.stripeCustomerId) {
+        params.set("customer", user.stripeCustomerId);
+        params.set("customer_update[address]", "auto");
+      } else params.set("customer_email", user.email);
       const session = await stripeForm(env, fetchImpl, "checkout/sessions", params);
       res.json({ id: session.id, url: session.url });
     } catch {
