@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Express } from "express";
-import { createApp } from "../src/server.js";
+import { createApp, safeReturnPath } from "../src/server.js";
 import { accountHasAccess, hashSecret, memoryStore, type AccountStore } from "../src/storage.js";
 import { numbersInRecords } from "../src/patents.js";
 import { DISCLAIMER } from "../src/disclaimer.js";
@@ -262,6 +262,8 @@ describe("Streamable HTTP tools", () => {
     expect(termsHtml).toContain("Terms");
     expect(termsHtml).toContain("USPTO");
     expect(termsHtml).toContain("ouroborosplugins@gmail.com");
+    expect(termsHtml).toContain("published by Ouroboros Apps");
+    expect(termsHtml).not.toContain("Lawrence Hutchins");
     expect(termsHtml).not.toMatch(/\$\s?\d/);
 
     const support = await fetch(`${server.url}/support`);
@@ -344,5 +346,44 @@ describe("Streamable HTTP tools", () => {
       body: JSON.stringify({ email: "reviewer@example.com", password: "not-the-reviewer-password" })
     });
     expect(wrong.status).toBe(401);
+  });
+});
+
+
+describe("OpenAI challenge and safe return paths", () => {
+  const closers: Array<() => Promise<void>> = [];
+  afterEach(async () => {
+    while (closers.length) await closers.pop()?.();
+  });
+
+  it("serves the OpenAI apps challenge from OPENAI_APPS_CHALLENGE", async () => {
+    const missingApp = createApp({ store: memoryStore(), env: { AUTH_SECRET: "test-auth-secret", USPTO_API_KEY: "test-key" } });
+    const missingServer = await listen(missingApp);
+    closers.push(missingServer.close);
+    const missing = await fetch(`${missingServer.url}/.well-known/openai-apps-challenge`);
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get("content-type")).toMatch(/text\/plain/);
+    expect(await missing.text()).toBe("Verification is not configured.");
+
+    const presentApp = createApp({
+      store: memoryStore(),
+      env: { AUTH_SECRET: "test-auth-secret", USPTO_API_KEY: "test-key", OPENAI_APPS_CHALLENGE: "challenge-token-value" }
+    });
+    const presentServer = await listen(presentApp);
+    closers.push(presentServer.close);
+    const present = await fetch(`${presentServer.url}/.well-known/openai-apps-challenge`);
+    expect(present.status).toBe(200);
+    expect(present.headers.get("content-type")).toMatch(/text\/plain/);
+    expect(await present.text()).toBe("challenge-token-value");
+  });
+
+  it("rejects open redirects in login return paths", () => {
+    expect(safeReturnPath("/account")).toBe("/account");
+    expect(safeReturnPath("/authorize?x=1")).toBe("/authorize?x=1");
+    expect(safeReturnPath("//evil.example")).toBe("/");
+    expect(safeReturnPath("/\\evil.example")).toBe("/");
+    expect(safeReturnPath("https://evil.example")).toBe("/");
+    expect(safeReturnPath("\\evil.example")).toBe("/");
+    expect(safeReturnPath("/ok/nested")).toBe("/ok/nested");
   });
 });

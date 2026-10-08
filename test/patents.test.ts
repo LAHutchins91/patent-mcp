@@ -49,6 +49,13 @@ describe("patent office mapping", () => {
     expect(citations.map((item) => item.applicationNumber)).toEqual(["16111111"]);
   });
 
+  it("formats CPC subgroup queries so spaced USPTO bag values still match", () => {
+    expect(buildUsptoBody({ cpc: "H04L", limit: 5 }).q).toBe("applicationMetaData.cpcClassificationBag:H04L*");
+    expect(buildUsptoBody({ cpc: "H04L9/32", limit: 5 }).q).toBe("applicationMetaData.cpcClassificationBag:H04L*9/32*");
+    expect(buildUsptoBody({ cpc: "H04L 9/32", limit: 5 }).q).toBe("applicationMetaData.cpcClassificationBag:H04L*9/32*");
+    expect(buildUsptoBody({ cpc: "C07H19/207", limit: 5 }).q).toBe("applicationMetaData.cpcClassificationBag:C07H*19/207*");
+  });
+
   it("builds office queries without dropping the caller's dates", () => {
     const uspto = buildUsptoBody({ keywords: "nucleotide sequencing", cpc: "C12Q", assignee: "Pacific Biosciences", dateFrom: "2020-01-01", limit: 5 });
     expect(uspto.q).toContain("(nucleotide) AND (sequencing)");
@@ -139,7 +146,7 @@ describe("patent office mapping", () => {
     const result = await service.getPatent("EP0351918");
     expect(calls).toBe(0);
     expect(result.patents).toEqual([]);
-    expect(result.warnings).toEqual(["Non-US numbers need EPO_CONSUMER_KEY and EPO_CONSUMER_SECRET on the server."]);
+    expect(result.warnings).toEqual(["Patent covers US patents only. Try a US patent number (for example US10000000)."]);
   });
 
   it("treats a USPTO search 404 as zero results", async () => {

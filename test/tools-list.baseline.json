@@ -14,7 +14,7 @@
         "claims": {
           "type": "string",
           "maxLength": 2000,
-          "description": "Claim language. EPO searches claim text. USPTO matches these words across the file wrapper."
+          "description": "Claim language. USPTO matches these words across the file wrapper."
         },
         "cpc": {
           "type": "string",
@@ -70,7 +70,7 @@
           "type": "string",
           "minLength": 4,
           "maxLength": 32,
-          "description": "Patent or publication number, such as US12000000, 12000000, or EP0351918."
+          "description": "US patent or publication number, such as US10000000 or 10000000."
         }
       },
       "required": [

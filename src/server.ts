@@ -157,9 +157,12 @@ function pkceMatches(verifier: string, challenge: string): boolean {
 }
 
 function safeReturn(value: unknown): string {
-  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return "/";
+  if (typeof value !== "string") return "/";
+  if (!value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\") || value.includes("\\")) return "/";
   return value;
 }
+
+export { safeReturn as safeReturnPath };
 
 function wantsJson(req: Request): boolean {
   return Boolean(req.is("json") || req.get("accept")?.includes("application/json"));
@@ -299,6 +302,12 @@ export function createApp(options: AppOptions = {}) {
       storageBackend: store.backend,
       authSecretConfigured: Boolean(env.AUTH_SECRET)
     });
+  });
+
+  app.get("/.well-known/openai-apps-challenge", (_req, res) => {
+    const token = env.OPENAI_APPS_CHALLENGE;
+    if (!token) return res.status(404).type("text").send("Verification is not configured.");
+    res.type("text").send(token);
   });
 
   app.post("/billing/webhook", express.raw({ type: "application/json", limit: "256kb" }), async (req, res) => {

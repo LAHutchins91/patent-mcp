@@ -40,7 +40,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: {
         keywords: optionalText(400).describe("Words to find in the application or title and abstract."),
-        claims: optionalText(2000).describe("Claim language. EPO searches claim text. USPTO matches these words across the file wrapper."),
+        claims: optionalText(2000).describe("Claim language. USPTO matches these words across the file wrapper."),
         cpc: optionalText(30).describe("CPC symbol, such as H04L or C07H19/207."),
         assignee: optionalText(200).describe("Applicant or assignee name."),
         inventor: optionalText(200).describe("Inventor name."),
@@ -68,7 +68,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
       description: "Fetch one US patent's title, abstract, claims, status, family, and citations from USPTO. Missing text is omitted rather than filled in. Not legal advice.",
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: {
-        patentNumber: z.string().trim().min(4).max(32).describe("Patent or publication number, such as US12000000, 12000000, or EP0351918.")
+        patentNumber: z.string().trim().min(4).max(32).describe("US patent or publication number, such as US10000000 or 10000000.")
       }
     },
     async (args) => run(() => service.getPatent(args.patentNumber))
