@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.LAHutchins91/patent",
-  "title": "Patent",
-  "description": "Patent by Ouroboros: USPTO and EPO search for AI assistants, over MCP.",
-  "version": "1.0.0",
+  "title": "Patent by Ouroboros Apps",
+  "description": "USPTO patent search and prior art lookup. Not legal advice",
+  "version": "1.0.1",
   "repository": {
     "url": "https://github.com/LAHutchins91/patent-mcp",
     "source": "github"
@@ -19,5 +19,6 @@
       "type": "streamable-http",
       "url": "https://patent-mcp.vercel.app/mcp"
     }
-  ]
+  ],
+  "websiteUrl": "https://ouroborosapps.com/docs/patent"
 }

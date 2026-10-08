@@ -6,6 +6,14 @@ It searches the USPTO Open Data Portal and, when you add a free consumer key, EP
 
 **This is not legal advice.** It is not a substitute for a registered patent attorney or agent. A result is not an opinion on patentability, infringement, validity, or freedom to operate.
 
+## Hosted server
+
+- MCP server URL: `https://patent-mcp.vercel.app/mcp` (Streamable HTTP, OAuth sign-in)
+- Docs: https://ouroborosapps.com/docs/patent
+- Status: early access. Paste the URL into Claude, Cursor, Grok, or ChatGPT developer mode.
+- Coverage on the hosted server: USPTO Open Data Portal. EPO Open Patent Services is not turned on, so full claim-text search and EPO citation search are not available there.
+- Registry name: `io.github.LAHutchins91/patent`
+
 ## Connect
 
 The MCP address is your deployment origin plus `/mcp`. Locally that is `http://127.0.0.1:8787/mcp`.
