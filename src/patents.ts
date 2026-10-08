@@ -211,8 +211,10 @@ export function cpcUsptoQueryClause(input: string): string {
   if (!match) throw new PatentInputError("CPC class must look like H04L or C07H19/207.");
   const [, subclass, rest] = match;
   if (!rest) return `applicationMetaData.cpcClassificationBag:${subclass}*`;
-  // Indexed symbols often insert spaces after the subclass; allow them with a wildcard.
-  return `applicationMetaData.cpcClassificationBag:${subclass}*${rest}*`;
+  // USPTO bag values are sometimes compact (H04L9/3213) and sometimes spaced
+  // (H04L   9/3213). OpenSearch allows trailing * and single-char ?, not infix *.
+  const variants = [0, 1, 2, 3].map((spaces) => `${subclass}${"?".repeat(spaces)}${rest}*`);
+  return `(${variants.map((value) => `applicationMetaData.cpcClassificationBag:${value}`).join(" OR ")})`;
 }
 
 export function buildUsptoBody(input: SearchInput): Json {

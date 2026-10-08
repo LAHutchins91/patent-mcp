@@ -51,9 +51,14 @@ describe("patent office mapping", () => {
 
   it("formats CPC subgroup queries so spaced USPTO bag values still match", () => {
     expect(buildUsptoBody({ cpc: "H04L", limit: 5 }).q).toBe("applicationMetaData.cpcClassificationBag:H04L*");
-    expect(buildUsptoBody({ cpc: "H04L9/32", limit: 5 }).q).toBe("applicationMetaData.cpcClassificationBag:H04L*9/32*");
-    expect(buildUsptoBody({ cpc: "H04L 9/32", limit: 5 }).q).toBe("applicationMetaData.cpcClassificationBag:H04L*9/32*");
-    expect(buildUsptoBody({ cpc: "C07H19/207", limit: 5 }).q).toBe("applicationMetaData.cpcClassificationBag:C07H*19/207*");
+    expect(buildUsptoBody({ cpc: "H04L9/32", limit: 5 }).q).toBe(
+      "(applicationMetaData.cpcClassificationBag:H04L9/32* OR applicationMetaData.cpcClassificationBag:H04L?9/32* OR applicationMetaData.cpcClassificationBag:H04L??9/32* OR applicationMetaData.cpcClassificationBag:H04L???9/32*)"
+    );
+    expect(buildUsptoBody({ cpc: "H04L 9/32", limit: 5 }).q).toBe(
+      "(applicationMetaData.cpcClassificationBag:H04L9/32* OR applicationMetaData.cpcClassificationBag:H04L?9/32* OR applicationMetaData.cpcClassificationBag:H04L??9/32* OR applicationMetaData.cpcClassificationBag:H04L???9/32*)"
+    );
+    expect(buildUsptoBody({ cpc: "C07H19/207", limit: 5 }).q).toContain("C07H19/207*");
+    expect(buildUsptoBody({ cpc: "C07H19/207", limit: 5 }).q).toContain("C07H???19/207*");
   });
 
   it("builds office queries without dropping the caller's dates", () => {
