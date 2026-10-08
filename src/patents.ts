@@ -130,7 +130,7 @@ export function googlePatentsUrl(country: string, number: string): string | unde
 export function normalizeOfficeId(input: string): OfficeId {
   const compact = input.trim().replace(/[\s,/-]/g, "").toUpperCase();
   if (!/^[A-Z0-9]{4,22}$/.test(compact)) {
-    throw new PatentInputError("Use a patent or publication number such as US12000000 or EP0351918.");
+    throw new PatentInputError("Use a US patent or publication number such as US10000000 or 10000000.");
   }
   const country = /^[A-Z]{2}/.test(compact) ? compact.slice(0, 2) : "US";
   const publication = /^[A-Z]{2}\d{8,}A\d?$/.test(compact) ? compact : undefined;
@@ -195,6 +195,26 @@ function keywordClause(words: string[], match: "all" | "any", field?: string): s
   return `${field}:(${value})`;
 }
 
+
+/** Compact CPC and build a USPTO clause that still matches spaced bag values like "H04L   9/3213". */
+export function normalizeCpcSymbol(input: string): string {
+  const cpc = input.toUpperCase().replace(/\s+/g, "");
+  if (!/^[A-HY][0-9]{2}[A-Z0-9/]*$/.test(cpc)) {
+    throw new PatentInputError("CPC class must look like H04L or C07H19/207.");
+  }
+  return cpc;
+}
+
+export function cpcUsptoQueryClause(input: string): string {
+  const cpc = normalizeCpcSymbol(input);
+  const match = /^([A-HY][0-9]{2}[A-Z])(.*)$/.exec(cpc);
+  if (!match) throw new PatentInputError("CPC class must look like H04L or C07H19/207.");
+  const [, subclass, rest] = match;
+  if (!rest) return `applicationMetaData.cpcClassificationBag:${subclass}*`;
+  // Indexed symbols often insert spaces after the subclass; allow them with a wildcard.
+  return `applicationMetaData.cpcClassificationBag:${subclass}*${rest}*`;
+}
+
 export function buildUsptoBody(input: SearchInput): Json {
   const clauses: string[] = [];
   const keywords = sanitizeWords(input.keywords);
@@ -202,11 +222,7 @@ export function buildUsptoBody(input: SearchInput): Json {
   const claims = sanitizeWords(input.claims);
   if (claims.length) clauses.push(claims.map((word) => `(${word})`).join(" AND "));
   if (input.cpc) {
-    const cpc = input.cpc.toUpperCase().replace(/\s+/g, "");
-    if (!/^[A-HY][0-9]{2}[A-Z0-9/]*$/.test(cpc)) {
-      throw new PatentInputError("CPC class must look like H04L or C07H19/207.");
-    }
-    clauses.push(`applicationMetaData.cpcClassificationBag:${cpc}*`);
+    clauses.push(cpcUsptoQueryClause(input.cpc));
   }
   const assignee = phrase(input.assignee);
   if (input.assignee && !assignee) throw new PatentInputError("Assignee has no searchable letters.");
@@ -659,7 +675,7 @@ export class PatentService {
     const sources: string[] = [];
     const lists: PatentRecord[][] = [];
     if (input.claims && !this.configured().epo) {
-      warnings.push("USPTO file-wrapper search matches the claim words across application data. Full claim-text search uses EPO Open Patent Services when EPO_CONSUMER_KEY and EPO_CONSUMER_SECRET are set.");
+      warnings.push("USPTO file-wrapper search matches the claim words across application data.");
     }
     if (this.configured().uspto) {
       sources.push("USPTO Open Data Portal");
@@ -731,7 +747,7 @@ export class PatentService {
     const patents = primary ? [primary] : [];
     if (!patents.length && !warnings.length) {
       warnings.push(!this.configured().epo && id.country !== "US"
-        ? "Non-US numbers need EPO_CONSUMER_KEY and EPO_CONSUMER_SECRET on the server."
+        ? "Patent covers US patents only. Try a US patent number (for example US10000000)."
         : "No office returned a record for that number.");
     }
     return envelope(patents, warnings, sources);
