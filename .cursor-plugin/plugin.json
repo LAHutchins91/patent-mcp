@@ -1,0 +1,20 @@
+{
+  "name": "patent",
+  "displayName": "Patent by Ouroboros Apps",
+  "version": "1.0.1",
+  "description": "Patent searches the public USPTO record for prior art. It is a lookup tool, not legal advice.",
+  "author": {
+    "name": "Ouroboros"
+  },
+  "homepage": "https://ouroborosapps.com",
+  "repository": "https://github.com/LAHutchins91/patent-mcp",
+  "license": "MIT",
+  "keywords": [
+    "uspto",
+    "prior art",
+    "patents",
+    "mcp"
+  ],
+  "logo": "logo.jpg",
+  "publisher": "Ouroboros"
+}
