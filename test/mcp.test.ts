@@ -261,6 +261,7 @@ describe("Streamable HTTP tools", () => {
     const termsHtml = await terms.text();
     expect(termsHtml).toContain("Terms");
     expect(termsHtml).toContain("USPTO");
+    expect(termsHtml).toContain("ouroborosplugins@gmail.com");
     expect(termsHtml).not.toMatch(/\$\s?\d/);
 
     const support = await fetch(`${server.url}/support`);

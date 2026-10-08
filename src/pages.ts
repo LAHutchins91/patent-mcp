@@ -209,6 +209,7 @@ export function termsPage(origin: string): string {
       <p>${escapeHtml(PRODUCT_NAME)} is published by Lawrence Hutchins. It returns United States patent records from the USPTO Open Data Portal. You are responsible for reading the record and for how you use it. A missing field means USPTO did not provide it. ${escapeHtml(DISCLAIMER)}</p>
       <p>A new account can search during a 14-day trial. After the trial, search tools require a Pro subscription, unless the operator has granted that account ongoing access. Stripe Checkout shows the amount before you pay. You can cancel from the billing portal on the home page after a subscription exists.</p>
       <p>The software is provided under the MIT license, without warranty.</p>
+      <p>Questions about these terms can go to <a href="mailto:${escapeHtml(SUPPORT_EMAIL)}">${escapeHtml(SUPPORT_EMAIL)}</a>.</p>
     </section>`);
 }
 
