@@ -213,7 +213,9 @@ export function cpcUsptoQueryClause(input: string): string {
   if (!rest) return `applicationMetaData.cpcClassificationBag:${subclass}*`;
   // USPTO bag values are sometimes compact (H04L9/3213) and sometimes spaced
   // (H04L   9/3213). OpenSearch allows trailing * and single-char ?, not infix *.
-  const variants = [0, 1, 2, 3].map((spaces) => `${subclass}${"?".repeat(spaces)}${rest}*`);
+  // Escape "/" so it is not treated as a regexp delimiter.
+  const escapedRest = rest.replace(/\//g, "\\/");
+  const variants = [0, 1, 2, 3].map((spaces) => `${subclass}${"?".repeat(spaces)}${escapedRest}*`);
   return `(${variants.map((value) => `applicationMetaData.cpcClassificationBag:${value}`).join(" OR ")})`;
 }
 
