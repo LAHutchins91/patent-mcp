@@ -7,7 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { DISCLAIMER, SERVICE_NAME, VERSION } from "./disclaimer.js";
-import { authorizePage, connectPage, escapeHtml, homePage } from "./pages.js";
+import { authorizePage, connectPage, escapeHtml, homePage, privacyPage, supportPage, termsPage } from "./pages.js";
 import { PatentService } from "./patents.js";
 import {
   accountHasAccess,
@@ -79,6 +79,28 @@ function originOf(req: Request, env: NodeJS.ProcessEnv): string {
 
 function authSecret(env: NodeJS.ProcessEnv): string {
   return env.AUTH_SECRET || ephemeralSecret;
+}
+
+function reviewerLoginEmail(env: NodeJS.ProcessEnv): string {
+  return (env.REVIEWER_LOGIN_EMAIL ?? "").trim().toLowerCase();
+}
+
+/** `scrypt:<base64url salt>:<base64url hash>` from Node scrypt(password, salt, 32). */
+function parseReviewerPasswordHash(value: string | undefined): { salt: string; hash: string } | undefined {
+  const match = /^scrypt:([A-Za-z0-9_-]{8,128}):([A-Za-z0-9_-]{16,256})$/.exec((value ?? "").trim());
+  if (!match) return undefined;
+  return { salt: match[1], hash: match[2] };
+}
+
+function compedEmails(env: NodeJS.ProcessEnv): Set<string> {
+  const emails = new Set<string>();
+  for (const part of (env.COMP_ACCOUNT_EMAILS ?? "").split(",")) {
+    const email = part.trim().toLowerCase();
+    if (email.includes("@") && !email.includes(" ")) emails.add(email);
+  }
+  const reviewer = reviewerLoginEmail(env);
+  if (reviewer.includes("@") && !reviewer.includes(" ")) emails.add(reviewer);
+  return emails;
 }
 
 function originAllowed(origin: string | undefined, appOrigin: string): boolean {
@@ -346,6 +368,7 @@ export function createApp(options: AppOptions = {}) {
       origin: originOf(req, env),
       user,
       now: nowFn(),
+      comped: Boolean(user && compedEmails(env).has(user.email.toLowerCase())),
       notice: checkout === "success" ? "Checkout completed. Subscription status updates when Stripe notifies this server." : undefined,
       error: checkout === "cancelled" ? "Checkout was cancelled. No changes were made." : undefined
     }));
@@ -353,6 +376,18 @@ export function createApp(options: AppOptions = {}) {
 
   app.get("/connect", (req, res) => {
     res.type("html").send(connectPage(originOf(req, env)));
+  });
+
+  app.get("/privacy", (req, res) => {
+    res.type("html").send(privacyPage(originOf(req, env)));
+  });
+
+  app.get("/terms", (req, res) => {
+    res.type("html").send(termsPage(originOf(req, env)));
+  });
+
+  app.get("/support", (req, res) => {
+    res.type("html").send(supportPage(originOf(req, env)));
   });
 
   app.post("/register", async (req, res) => {
@@ -521,6 +556,9 @@ export function createApp(options: AppOptions = {}) {
     }).safeParse(req.body);
     if (!parsed.success) return fail(req, res, 400, "Use a valid email and a password of at least 10 characters.");
     const email = parsed.data.email.toLowerCase();
+    if (reviewerLoginEmail(env) && email === reviewerLoginEmail(env)) {
+      return fail(req, res, 409, "An account with that email already exists.");
+    }
     const existing = (await store.read()).users.find((user) => user.email === email);
     if (existing) return fail(req, res, 409, "An account with that email already exists.");
     const password = await hashSecret(parsed.data.password);
@@ -550,6 +588,46 @@ export function createApp(options: AppOptions = {}) {
     }).safeParse(req.body);
     if (!parsed.success) return fail(req, res, 400, "Email or password is incorrect.");
     const email = parsed.data.email.toLowerCase();
+    const reviewerEmail = reviewerLoginEmail(env);
+    if (reviewerEmail && email === reviewerEmail) {
+      const hashed = parseReviewerPasswordHash(env.REVIEWER_LOGIN_PASSWORD_HASH);
+      const match = hashed ? await verifySecret(parsed.data.password, hashed.hash, hashed.salt) : false;
+      if (!hashed || !match) return fail(req, res, 401, "Email or password is incorrect.");
+      let userId = (await store.read()).users.find((item) => item.email === email)?.id;
+      if (!userId) {
+        userId = `user_${randomBytes(12).toString("base64url")}`;
+        const created = nowFn();
+        const id = userId;
+        await store.update((draft) => {
+          const current = draft.users.find((item) => item.email === email);
+          if (current) {
+            current.passwordHash = hashed.hash;
+            current.passwordSalt = hashed.salt;
+            return;
+          }
+          draft.users.push({
+            id,
+            email,
+            passwordHash: hashed.hash,
+            passwordSalt: hashed.salt,
+            createdAt: created.toISOString(),
+            trialEndsAt: new Date(created.getTime() - 1000).toISOString()
+          });
+        });
+        userId = (await store.read()).users.find((item) => item.email === email)?.id ?? id;
+      } else {
+        const id = userId;
+        await store.update((draft) => {
+          const current = draft.users.find((item) => item.id === id);
+          if (!current) return;
+          current.passwordHash = hashed.hash;
+          current.passwordSalt = hashed.salt;
+        });
+      }
+      setSession(res, userId, authSecret(env), originOf(req, env).startsWith("https:"), nowFn().getTime());
+      if (req.is("json")) return res.json({ id: userId });
+      return res.redirect(safeReturn(parsed.data.returnTo));
+    }
     const user = (await store.read()).users.find((item) => item.email === email);
     const dummy = user ?? { passwordHash: "x".repeat(43), passwordSalt: "salt" };
     const match = user ? await verifySecret(parsed.data.password, user.passwordHash, user.passwordSalt) : await verifySecret(parsed.data.password, dummy.passwordHash, dummy.passwordSalt).then(() => false);
@@ -646,7 +724,7 @@ export function createApp(options: AppOptions = {}) {
         res.set("WWW-Authenticate", `Bearer resource_metadata="${originOf(req, env)}/.well-known/oauth-protected-resource/mcp"`);
         return res.status(401).json({ error: "Sign in to Patent by Ouroboros to use patent tools." });
       }
-      if (!accountHasAccess(user, nowFn())) {
+      if (!compedEmails(env).has(user.email.toLowerCase()) && !accountHasAccess(user, nowFn())) {
         return res.status(403).json({
           error: "An active trial or Pro subscription is required.",
           access_information: `${originOf(req, env)}/#plans`

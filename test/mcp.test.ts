@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Express } from "express";
 import { createApp } from "../src/server.js";
-import { memoryStore, type AccountStore } from "../src/storage.js";
+import { accountHasAccess, hashSecret, memoryStore, type AccountStore } from "../src/storage.js";
 import { numbersInRecords } from "../src/patents.js";
 import { DISCLAIMER } from "../src/disclaimer.js";
 import { grounded, usptoSample } from "./fixtures.js";
@@ -44,7 +45,16 @@ function cookieFrom(response: Response): string {
   return response.headers.getSetCookie().map((item) => item.split(";")[0]).join("; ");
 }
 
-async function accessToken(url: string): Promise<string> {
+const toolsListBaseline = JSON.parse(readFileSync(new URL("./tools-list.baseline.json", import.meta.url), "utf8")) as Array<{
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: unknown;
+  annotations: unknown;
+  execution: unknown;
+}>;
+
+async function accessToken(url: string, options?: { email?: string; password?: string; register?: boolean }): Promise<string> {
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const registered = await fetch(`${url}/register`, {
@@ -53,13 +63,21 @@ async function accessToken(url: string): Promise<string> {
     body: JSON.stringify({ client_name: "Test Client", redirect_uris: ["http://127.0.0.1/callback"] })
   });
   const client = await registered.json() as { client_id: string };
-  const signup = await fetch(`${url}/account/register`, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ email: `founder-${randomBytes(4).toString("hex")}@example.com`, password: "correct-horse" })
-  });
-  expect(signup.status).toBe(201);
-  const cookie = cookieFrom(signup);
+  const email = options?.email ?? `founder-${randomBytes(4).toString("hex")}@example.com`;
+  const password = options?.password ?? "correct-horse";
+  const session = options?.register === false
+    ? await fetch(`${url}/account/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ email, password })
+    })
+    : await fetch(`${url}/account/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+  expect(session.status).toBe(options?.register === false ? 200 : 201);
+  const cookie = cookieFrom(session);
   const query = new URLSearchParams({
     response_type: "code",
     client_id: client.client_id,
@@ -136,7 +154,8 @@ describe("Streamable HTTP tools", () => {
     expect(tools.map((tool) => tool.name)).toEqual(["search_patents", "get_patent", "find_patent_citations", "search_prior_art"]);
     for (const tool of tools) expect(tool.description.toLowerCase()).toContain("not legal advice");
     const citations = tools.find((tool) => tool.name === "find_patent_citations");
-    expect(citations?.description).toContain("EPO citation search when configured");
+    expect(citations?.description).toContain("USPTO office-action citations");
+    expect(citations?.description).not.toContain("EPO");
     expect(citations?.description).toContain("The PatentsView citation graph is paused");
 
     const denied = await mcp(server.url, "tools/call", { name: "search_patents", arguments: { keywords: "nucleotide" } });
@@ -188,5 +207,140 @@ describe("Streamable HTTP tools", () => {
     });
     const response = await mcp(server.url, "tools/call", { name: "search_patents", arguments: { keywords: "nucleotide" } }, token);
     expect(response.status).toBe(403);
+  });
+
+  it("keeps tools/list schemas and changes only the USPTO descriptions", async () => {
+    const app = createApp({ store: memoryStore(), env: { AUTH_SECRET: "test-auth-secret", NODE_ENV: "test" } });
+    const server = await listen(app);
+    closers.push(server.close);
+    const listed = await mcp(server.url, "tools/list", {});
+    expect(listed.status).toBe(200);
+    const tools = (listed.body.result as { tools: typeof toolsListBaseline }).tools;
+    expect(tools.map((tool) => tool.name)).toEqual(["search_patents", "get_patent", "find_patent_citations", "search_prior_art"]);
+    const changed = new Set(["search_patents", "get_patent", "find_patent_citations"]);
+    expect(tools).toHaveLength(toolsListBaseline.length);
+    for (const tool of tools) {
+      const before = toolsListBaseline.find((item) => item.name === tool.name);
+      expect(before, tool.name).toBeDefined();
+      expect(tool.title).toEqual(before?.title);
+      expect(tool.inputSchema).toEqual(before?.inputSchema);
+      expect(tool.annotations).toEqual(before?.annotations);
+      expect(tool.execution).toEqual(before?.execution);
+      if (changed.has(tool.name)) {
+        expect(tool.description).not.toEqual(before?.description);
+        expect(tool.description).not.toMatch(/EPO/);
+        expect(tool.description).toMatch(/US patent/);
+        expect(tool.description).toContain("USPTO");
+      } else {
+        expect(tool.description).toEqual(before?.description);
+      }
+    }
+  });
+
+  it("serves privacy, terms, and support", async () => {
+    const app = createApp({ store: memoryStore(), env: { AUTH_SECRET: "test-auth-secret" } });
+    const server = await listen(app);
+    closers.push(server.close);
+    const privacy = await fetch(`${server.url}/privacy`);
+    expect(privacy.status).toBe(200);
+    expect(privacy.headers.get("content-type")).toMatch(/html/);
+    const privacyHtml = await privacy.text();
+    expect(privacyHtml).toContain("ouroborosplugins@gmail.com");
+    expect(privacyHtml).toContain("USPTO");
+    expect(privacyHtml).toContain("United States");
+    expect(privacyHtml).not.toMatch(/EPO/);
+    expect(privacyHtml).toContain("30 days");
+    expect(privacyHtml).toContain("5 minutes");
+    expect(privacyHtml).toMatch(/delet/i);
+    expect(privacyHtml).not.toMatch(/\$\s?\d/);
+
+    const terms = await fetch(`${server.url}/terms`);
+    expect(terms.status).toBe(200);
+    expect(terms.headers.get("content-type")).toMatch(/html/);
+    const termsHtml = await terms.text();
+    expect(termsHtml).toContain("Terms");
+    expect(termsHtml).toContain("USPTO");
+    expect(termsHtml).not.toMatch(/\$\s?\d/);
+
+    const support = await fetch(`${server.url}/support`);
+    expect(support.status).toBe(200);
+    expect(support.headers.get("content-type")).toMatch(/html/);
+    const supportHtml = await support.text();
+    expect(supportHtml).toContain("ouroborosplugins@gmail.com");
+    expect(supportHtml).toMatch(/delet/i);
+    expect(supportHtml).not.toMatch(/\$\s?\d/);
+
+    const home = await fetch(server.url);
+    const homeHtml = await home.text();
+    expect(homeHtml).toContain('href="/privacy"');
+    expect(homeHtml).toContain('href="/terms"');
+    expect(homeHtml).toContain('href="/support"');
+  });
+
+  it("lets a comped account search after the trial ends and blocks a normal account", async () => {
+    const password = "correct-horse";
+    const { hash, salt } = await hashSecret(password);
+    const store = memoryStore();
+    const app = createApp({
+      store,
+      fetchImpl: mockFetch,
+      env: {
+        AUTH_SECRET: "test-auth-secret",
+        USPTO_API_KEY: "test-key",
+        COMP_ACCOUNT_EMAILS: "comped@example.com",
+        REVIEWER_LOGIN_EMAIL: "reviewer@example.com",
+        REVIEWER_LOGIN_PASSWORD_HASH: `scrypt:${salt}:${hash}`
+      }
+    });
+    const server = await listen(app);
+    closers.push(server.close);
+
+    const normal = await accessToken(server.url, { email: "founder@example.com" });
+    await store.update((draft) => {
+      const user = draft.users.find((item) => item.email === "founder@example.com");
+      if (!user) return;
+      user.trialEndsAt = new Date(Date.now() - 1000).toISOString();
+      user.subscriptionStatus = undefined;
+    });
+    const denied = await mcp(server.url, "tools/call", { name: "search_patents", arguments: { keywords: "nucleotide" } }, normal);
+    expect(denied.status).toBe(403);
+
+    const comped = await accessToken(server.url, { email: "comped@example.com" });
+    await store.update((draft) => {
+      const user = draft.users.find((item) => item.email === "comped@example.com");
+      if (!user) return;
+      user.trialEndsAt = new Date(Date.now() - 1000).toISOString();
+      user.subscriptionStatus = undefined;
+    });
+    const compedUser = (await store.read()).users.find((item) => item.email === "comped@example.com");
+    expect(compedUser).toBeDefined();
+    expect(accountHasAccess(compedUser!)).toBe(false);
+    const allowed = await mcp(server.url, "tools/call", { name: "search_patents", arguments: { keywords: "nucleotide" } }, comped);
+    expect(allowed.status).toBe(200);
+    const allowedText = allowed.body.result?.content?.[0]?.text ?? "";
+    expect(toolJson(allowedText).patents?.length).toBeGreaterThan(0);
+
+    const signup = await fetch(`${server.url}/account/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ email: "reviewer@example.com", password })
+    });
+    expect(signup.status).toBe(409);
+    const reviewer = await accessToken(server.url, { email: "reviewer@example.com", password, register: false });
+    const reviewerUser = (await store.read()).users.find((item) => item.email === "reviewer@example.com");
+    expect(reviewerUser).toBeDefined();
+    expect(Date.parse(reviewerUser!.trialEndsAt)).toBeLessThan(Date.now());
+    expect(accountHasAccess(reviewerUser!)).toBe(false);
+    const reviewed = await mcp(server.url, "tools/call", { name: "get_patent", arguments: { patentNumber: "US12000000" } }, reviewer);
+    expect(reviewed.status).toBe(200);
+    const reviewedText = reviewed.body.result?.content?.[0]?.text ?? "";
+    expect(toolJson(reviewedText).patents?.length).toBeGreaterThan(0);
+
+    const wrong = await fetch(`${server.url}/account/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ email: "reviewer@example.com", password: "not-the-reviewer-password" })
+    });
+    expect(wrong.status).toBe(401);
   });
 });

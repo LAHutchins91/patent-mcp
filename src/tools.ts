@@ -36,7 +36,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
     "search_patents",
     {
       title: "Search patents",
-      description: "Search public patent records by keywords, claim language, CPC class, assignee, inventor, or grant date. Every number in the result was returned by USPTO or EPO. Not legal advice.",
+      description: "Search public US patent records by keywords, claim language, CPC class, assignee, inventor, or grant date. Every number in the result was returned by USPTO. Not legal advice.",
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: {
         keywords: optionalText(400).describe("Words to find in the application or title and abstract."),
@@ -65,7 +65,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
     "get_patent",
     {
       title: "Get patent details",
-      description: "Fetch one patent's title, abstract, claims, status, family, and citations from USPTO and, when configured, EPO. Missing text is omitted rather than filled in. Not legal advice.",
+      description: "Fetch one US patent's title, abstract, claims, status, family, and citations from USPTO. Missing text is omitted rather than filled in. Not legal advice.",
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: {
         patentNumber: z.string().trim().min(4).max(32).describe("Patent or publication number, such as US12000000, 12000000, or EP0351918.")
@@ -78,7 +78,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
     "find_patent_citations",
     {
       title: "Find citing and cited patents",
-      description: "List documents cited by a patent and documents that cite it, using USPTO grant references, USPTO office-action citations, and EPO citation search when configured. The PatentsView citation graph is paused. Not legal advice.",
+      description: "List documents cited by a US patent and documents that cite it, using USPTO grant references and USPTO office-action citations. The PatentsView citation graph is paused. Not legal advice.",
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: {
         patentNumber: z.string().trim().min(4).max(32).describe("Patent or publication number."),

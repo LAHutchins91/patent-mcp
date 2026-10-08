@@ -2,6 +2,8 @@ import { DISCLAIMER } from "./disclaimer.js";
 import type { UserRecord } from "./storage.js";
 import { accountHasAccess } from "./storage.js";
 
+const SUPPORT_EMAIL = "ouroborosplugins@gmail.com";
+
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -72,17 +74,20 @@ function shell(origin: string, main: string): string {
     <nav>
       <a href="/connect">Connect</a>
       <a href="/#plans">Trial</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/support">Support</a>
       <a href="/health">Health</a>
     </nav>
   </header>
   <main>${main}</main>
   <footer>
     <span>Patent by Ouroboros. Public patent records for inventors, founders, and counsel.</span>
+    <span><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/support">Support</a></span>
     <span>MCP <a href="${escapeHtml(origin)}/mcp">${escapeHtml(origin)}/mcp</a></span>
   </footer>`);
 }
 
-function accountBlock(user: UserRecord | undefined, now: Date): string {
+function accountBlock(user: UserRecord | undefined, now: Date, comped = false): string {
   if (!user) {
     return `<div class="grid">
       <form class="card stack" method="post" action="/account/register">
@@ -101,13 +106,15 @@ function accountBlock(user: UserRecord | undefined, now: Date): string {
       </form>
     </div>`;
   }
-  const access = accountHasAccess(user, now);
+  const access = comped || accountHasAccess(user, now);
   const trial = new Date(user.trialEndsAt);
-  const status = access
-    ? (user.subscriptionStatus === "active"
-      ? "Pro is active."
-      : `Trial access is open until ${trial.toUTCString()}.`)
-    : "The trial has ended. Continue on Pro through Stripe Checkout.";
+  const status = comped
+    ? "Access is open."
+    : access
+      ? (user.subscriptionStatus === "active"
+        ? "Pro is active."
+        : `Trial access is open until ${trial.toUTCString()}.`)
+      : "The trial has ended. Continue on Pro through Stripe Checkout.";
   return `<div class="card">
     <h3>${escapeHtml(user.email)}</h3>
     <p>${escapeHtml(status)}</p>
@@ -147,7 +154,7 @@ function accountBlock(user: UserRecord | undefined, now: Date): string {
   </script>`;
 }
 
-export function homePage(options: { origin: string; user?: UserRecord; notice?: string; error?: string; now?: Date }): string {
+export function homePage(options: { origin: string; user?: UserRecord; notice?: string; error?: string; now?: Date; comped?: boolean }): string {
   const now = options.now ?? new Date();
   const banner = options.notice ? `<p class="notice">${escapeHtml(options.notice)}</p>` : options.error ? `<p class="warn">${escapeHtml(options.error)}</p>` : "";
   return shell(options.origin, `
@@ -174,11 +181,45 @@ export function homePage(options: { origin: string; user?: UserRecord; notice?: 
       <p class="eyebrow">Access</p>
       <h2>14 days, then Pro.</h2>
       <p class="muted">A new account can search during the trial. After that, Pro continues through Stripe Checkout. The amount is shown by Stripe, not here.</p>
-      ${accountBlock(options.user, now)}
+      ${accountBlock(options.user, now, options.comped)}
     </section>
     <section>
       <p class="eyebrow">Offices</p>
       <p class="muted">Results come from the USPTO Open Data Portal and, when you add a free consumer key, EPO Open Patent Services. Google Patents is used only as a link. The legacy PatentsView search API has been paused since its March 2026 move to the Open Data Portal. Patent numbers are copied from office responses and are never filled in when an office does not answer.</p>
+    </section>`);
+}
+
+export function privacyPage(origin: string): string {
+  const email = SUPPORT_EMAIL;
+  return shell(origin, `
+    <section>
+      <h1>Privacy</h1>
+      <p>Patent searches public United States patent records. Keyword, claim, class, assignee, inventor, date, and patent-number requests are sent to the USPTO Open Data Portal so that office can answer them. Google Patents is used only as a link on a record USPTO returned. Patent does not keep a database of your queries, and it does not invent a patent number when USPTO does not return one.</p>
+      <p>Sign-in uses the email and password you choose. Patent stores that email and a salted hash of the password, not the password itself. A signed browser cookie holds your account id. Connecting an assistant uses OAuth: Patent stores the client registration, a short-lived authorization code, and the access and refresh tokens for that connection. Those records live in the account store on this server. Office API keys and the session-signing secret stay in the server environment.</p>
+      <p>A new account can search during a 14-day trial. After that, search continues with a Pro subscription. The operator can also grant an account ongoing access, with no card and no trial end. Stripe receives the account id and either your email or an existing Stripe customer id, and Stripe handles payment details. Patent stores the Stripe customer id, subscription id, status, and current period end. It does not store card numbers.</p>
+      <p>Authorization codes expire after 5 minutes. Access tokens stop working after 1 hour. Refresh tokens expire after 30 days, and the browser session cookie lasts 30 days. Expired authorization codes and refresh tokens are removed the next time the account store is saved. Account records are kept until you ask for them to be deleted. Email <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a> to request deletion, a copy, or a correction, and include the account email. Stripe may retain billing records it needs for accounting or disputes. Deletion removes the account from this server's store; provider backups are not an instant erasure guarantee.</p>
+      <p>Patent does not sell queries or account records. A connected assistant receives the tool result for the request it made. Privacy questions can go to <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>.</p>
+    </section>`);
+}
+
+export function termsPage(origin: string): string {
+  return shell(origin, `
+    <section>
+      <h1>Terms</h1>
+      <p>Patent by Ouroboros is published by Lawrence Hutchins. It returns United States patent records from the USPTO Open Data Portal. You are responsible for reading the record and for how you use it. A missing field means USPTO did not provide it. ${escapeHtml(DISCLAIMER)}</p>
+      <p>A new account can search during a 14-day trial. After the trial, search tools require a Pro subscription, unless the operator has granted that account ongoing access. Stripe Checkout shows the amount before you pay. You can cancel from the billing portal on the home page after a subscription exists.</p>
+      <p>The software is provided under the MIT license, without warranty.</p>
+    </section>`);
+}
+
+export function supportPage(origin: string): string {
+  const email = SUPPORT_EMAIL;
+  return shell(origin, `
+    <section>
+      <h1>Support</h1>
+      <p>Questions about Patent by Ouroboros, billing, privacy, or connecting an assistant can go to <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>.</p>
+      <p>Email that address to request account deletion, a copy of the account record, or a correction. Include the account email. Do not include passwords, OAuth tokens, API keys, or payment card details.</p>
+      <p class="muted">A new account gets a 14-day trial, then Pro. Checkout shows the billing terms.</p>
     </section>`);
 }
 
