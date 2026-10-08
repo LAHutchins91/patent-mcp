@@ -1,6 +1,6 @@
-# Patent by Ouroboros
+# Patent by Ouroboros Apps
 
-Patent by Ouroboros is a remote MCP server for inventors, startup founders, patent agents and attorneys, and engineers who need to check whether an idea already appears in the public patent record.
+Patent by Ouroboros Apps is a remote MCP server for inventors, startup founders, patent agents and attorneys, and engineers who need to check whether an idea already appears in the public patent record.
 
 It searches United States patent records on the USPTO Open Data Portal. Google Patents is used only as a link. Every patent number in a tool result is copied from a USPTO response. The server does not fill in numbers when USPTO does not answer.
 

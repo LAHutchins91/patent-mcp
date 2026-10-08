@@ -6,7 +6,7 @@ import express, { type Request, type Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { DISCLAIMER, SERVICE_NAME, VERSION } from "./disclaimer.js";
+import { DISCLAIMER, PRODUCT_NAME, SERVICE_NAME, VERSION } from "./disclaimer.js";
 import { authorizePage, connectPage, escapeHtml, homePage, privacyPage, supportPage, termsPage } from "./pages.js";
 import { PatentService } from "./patents.js";
 import {
@@ -168,7 +168,7 @@ function wantsJson(req: Request): boolean {
 function fail(req: Request, res: Response, status: number, message: string) {
   if (wantsJson(req)) return res.status(status).json({ error: message });
   const back = safeReturn(req.body?.returnTo);
-  return res.status(status).type("html").send(`<!doctype html><meta charset="utf-8"><title>Patent by Ouroboros</title><p>${escapeHtml(message)}</p><p><a href="${escapeHtml(back)}">Back</a></p>`);
+  return res.status(status).type("html").send(`<!doctype html><meta charset="utf-8"><title>${escapeHtml(PRODUCT_NAME)}</title><p>${escapeHtml(message)}</p><p><a href="${escapeHtml(back)}">Back</a></p>`);
 }
 
 function validRedirect(uri: string): boolean {
@@ -198,7 +198,7 @@ function basicClient(req: Request): { id?: string; secret?: string } {
 function resourceMetadata(origin: string) {
   return {
     resource: `${origin}/mcp`,
-    resource_name: "Patent by Ouroboros",
+    resource_name: PRODUCT_NAME,
     authorization_servers: [origin],
     scopes_supported: ["patent:read"],
     bearer_methods_supported: ["header"],
@@ -289,7 +289,7 @@ export function createApp(options: AppOptions = {}) {
     res.json({
       ok: true,
       service: SERVICE_NAME,
-      name: "Patent by Ouroboros",
+      name: PRODUCT_NAME,
       version: VERSION,
       billingConfigured: billingConfigured(env),
       stripeWebhookConfigured: Boolean(env.STRIPE_WEBHOOK_SECRET),
@@ -706,7 +706,7 @@ export function createApp(options: AppOptions = {}) {
   app.get("/mcp", (req, res) => {
     if (!guardMcp(req, res)) return;
     res.set("WWW-Authenticate", `Bearer resource_metadata="${originOf(req, env)}/.well-known/oauth-protected-resource/mcp"`);
-    res.status(401).json({ error: "Use Streamable HTTP POST with your Patent connection." });
+    res.status(401).json({ error: `Use Streamable HTTP POST with your ${PRODUCT_NAME} connection.` });
   });
 
   app.post("/mcp", async (req, res) => {
@@ -722,7 +722,7 @@ export function createApp(options: AppOptions = {}) {
       const resource = `${originOf(req, env)}/mcp`;
       if (!record || !user || (record.resource && record.resource !== resource)) {
         res.set("WWW-Authenticate", `Bearer resource_metadata="${originOf(req, env)}/.well-known/oauth-protected-resource/mcp"`);
-        return res.status(401).json({ error: "Sign in to Patent by Ouroboros to use patent tools." });
+        return res.status(401).json({ error: `Sign in to ${PRODUCT_NAME} to use patent tools.` });
       }
       if (!compedEmails(env).has(user.email.toLowerCase()) && !accountHasAccess(user, nowFn())) {
         return res.status(403).json({
@@ -733,8 +733,8 @@ export function createApp(options: AppOptions = {}) {
     }
     try {
       const server = new McpServer({
-        name: SERVICE_NAME,
-        title: "Patent by Ouroboros",
+        name: PRODUCT_NAME,
+        title: PRODUCT_NAME,
         version: VERSION,
         description: DISCLAIMER,
         icons: [{ src: `${originOf(req, env)}/logo.jpg`, mimeType: "image/jpeg", sizes: ["1024x1024"], theme: "dark" }]
@@ -818,7 +818,7 @@ function oauthQuery(req: Request): { ok: true; value: Record<string, string> } |
   if (!value.client_id || !value.redirect_uri || !value.code_challenge || !value.state) return { ok: false, error: "client_id, redirect_uri, state, and code_challenge are required." };
   if (value.code_challenge_method !== "S256") return { ok: false, error: "PKCE S256 is required." };
   if (!validRedirect(value.redirect_uri)) return { ok: false, error: "Return address must be https, or http on localhost." };
-  if (value.resource && !value.resource.endsWith("/mcp")) return { ok: false, error: "Resource must be the Patent MCP endpoint." };
+  if (value.resource && !value.resource.endsWith("/mcp")) return { ok: false, error: `Resource must be the ${PRODUCT_NAME} endpoint.` };
   return { ok: true, value };
 }
 
@@ -827,6 +827,6 @@ export const app = createApp();
 const port = Number(process.env.PORT ?? 8787);
 if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) {
   app.listen(port, "0.0.0.0", () => {
-    console.log(`Patent by Ouroboros listening on ${port}`);
+    console.log(`${PRODUCT_NAME} listening on ${port}`);
   });
 }

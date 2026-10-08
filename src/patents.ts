@@ -1,4 +1,4 @@
-import { DISCLAIMER } from "./disclaimer.js";
+import { DISCLAIMER, PRODUCT_NAME } from "./disclaimer.js";
 
 export class PatentInputError extends Error {}
 export class PatentSourceError extends Error {}
@@ -737,7 +737,7 @@ export class PatentService {
   private requireSource() {
     if (!this.configured().uspto && !this.configured().epo) {
       throw new PatentSourceError(
-        "No patent office credentials are configured. Set USPTO_API_KEY, or both EPO_CONSUMER_KEY and EPO_CONSUMER_SECRET. Patent by Ouroboros does not invent patent numbers when an office API is unavailable. The legacy PatentsView PatentSearch API has been paused since the March 2026 move to the USPTO Open Data Portal."
+        `No patent office credentials are configured. Set USPTO_API_KEY, or both EPO_CONSUMER_KEY and EPO_CONSUMER_SECRET. ${PRODUCT_NAME} does not invent patent numbers when an office API is unavailable. The legacy PatentsView PatentSearch API has been paused since the March 2026 move to the USPTO Open Data Portal.`
       );
     }
   }

@@ -185,7 +185,7 @@ describe("Streamable HTTP tools", () => {
     const home = await fetch(server.url);
     const html = await home.text();
     expect(html).toContain("/logo.jpg");
-    expect(html).toContain("Patent by Ouroboros");
+    expect(html).toContain("Patent by Ouroboros Apps");
     expect(html).toContain("Search US patents from the USPTO Open Data Portal");
     expect(html).toContain("United States patent records from the USPTO Open Data Portal");
     expect(html).not.toMatch(/EPO/);
