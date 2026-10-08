@@ -50,6 +50,10 @@ export type SearchInput = {
   dateFrom?: string;
   dateTo?: string;
   limit?: number;
+  /** "any" matches a keyword on its own. The default "all" requires every keyword. */
+  keywordMatch?: "all" | "any";
+  /** When set, keyword text is searched in this office field instead of free text. */
+  keywordField?: string;
 };
 
 export type OfficeId = {
@@ -77,7 +81,12 @@ const STOP = new Set([
   "them", "then", "there", "thereby", "therein", "thereof", "these", "they", "this", "those",
   "through", "under", "upon", "used", "uses", "using", "very", "via", "were", "what", "when",
   "where", "wherein", "which", "while", "will", "with", "within", "without", "would", "your",
-  "device", "apparatus"
+  "device", "apparatus",
+  "able", "again", "all", "another", "any", "anyone", "anything", "based", "but", "else", "even",
+  "every", "everything", "few", "having", "her", "his", "how", "idea", "ideas", "let", "may",
+  "maybe", "might", "most", "need", "needed", "needs", "nor", "nothing", "off", "one", "our",
+  "out", "own", "per", "please", "really", "same", "she", "should", "someone", "something",
+  "thing", "things", "too", "use", "want", "wanted", "wants", "was", "who", "why", "yet", "you"
 ]);
 
 type Json = Record<string, unknown>;
@@ -96,14 +105,17 @@ function asString(value: unknown): string | undefined {
   return undefined;
 }
 
-export function sanitizeWords(value: string | undefined): string[] {
-  if (!value) return [];
+function splitWords(value: string): string[] {
   return value
     .replace(/[^A-Za-z0-9\s-]/g, " ")
     .split(/[\s-]+/)
     .map((word) => word.trim())
-    .filter((word) => word.length >= 2)
-    .slice(0, 12);
+    .filter((word) => word.length >= 2);
+}
+
+export function sanitizeWords(value: string | undefined): string[] {
+  if (!value) return [];
+  return splitWords(value).slice(0, 12);
 }
 
 export function googlePatentsUrl(country: string, number: string): string | undefined {
@@ -132,16 +144,27 @@ export function normalizeOfficeId(input: string): OfficeId {
   return { compact, country, usptoPatentDigits, usptoPublication: publication, epoRef: epoCore };
 }
 
+const PRIOR_ART_TERMS = 8;
+
 export function keywordsFromIdea(idea: string): string[] {
-  const counts = new Map<string, number>();
-  for (const word of sanitizeWords(idea.toLowerCase())) {
-    if (word.length < 4 || STOP.has(word)) continue;
-    counts.set(word, (counts.get(word) ?? 0) + 1);
+  const counts = new Map<string, { count: number; index: number }>();
+  let index = 0;
+  for (const word of splitWords(idea.toLowerCase())) {
+    if (word.length < 3 || STOP.has(word)) continue;
+    const existing = counts.get(word);
+    if (existing) existing.count += 1;
+    else counts.set(word, { count: 1, index: index++ });
   }
   return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length || a[0].localeCompare(b[0]))
+    .sort((a, b) => b[1].count - a[1].count || a[1].index - b[1].index)
     .map(([word]) => word)
-    .slice(0, 8);
+    .slice(0, PRIOR_ART_TERMS);
+}
+
+function containsIdeaTerm(text: string, term: string): boolean {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const suffix = term.length >= 4 ? "(?:s|es|ing)?" : "s?";
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}${suffix}(?:[^a-z0-9]|$)`).test(text);
 }
 
 export function overlapScore(terms: string[], patent: { title?: string; abstract?: string }): number {
@@ -149,16 +172,33 @@ export function overlapScore(terms: string[], patent: { title?: string; abstract
   const abstract = (patent.abstract ?? "").toLowerCase();
   let score = 0;
   for (const term of terms) {
-    if (title.includes(term)) score += 2;
-    else if (abstract.includes(term)) score += 1;
+    if (containsIdeaTerm(title, term)) score += 2;
+    else if (containsIdeaTerm(abstract, term)) score += 1;
   }
   return score;
+}
+
+export function rankByKeywordOverlap<T extends { title?: string; abstract?: string; patentNumber?: string }>(
+  terms: string[],
+  patents: T[]
+): Array<T & { keywordOverlap: number }> {
+  return patents
+    .map((patent) => ({ ...patent, keywordOverlap: overlapScore(terms, patent) }))
+    .sort((a, b) => b.keywordOverlap - a.keywordOverlap || (a.patentNumber ?? "").localeCompare(b.patentNumber ?? ""));
+}
+
+function keywordClause(words: string[], match: "all" | "any", field?: string): string {
+  const joiner = match === "any" ? " OR " : " AND ";
+  const wrapped = words.map((word) => `(${word})`).join(joiner);
+  if (!field) return match === "any" && words.length > 1 ? `(${wrapped})` : wrapped;
+  const value = words.length === 1 ? words[0] : wrapped;
+  return `${field}:(${value})`;
 }
 
 export function buildUsptoBody(input: SearchInput): Json {
   const clauses: string[] = [];
   const keywords = sanitizeWords(input.keywords);
-  if (keywords.length) clauses.push(keywords.map((word) => `(${word})`).join(" AND "));
+  if (keywords.length) clauses.push(keywordClause(keywords, input.keywordMatch ?? "all", input.keywordField));
   const claims = sanitizeWords(input.claims);
   if (claims.length) clauses.push(claims.map((word) => `(${word})`).join(" AND "));
   if (input.cpc) {
@@ -199,7 +239,7 @@ export function buildUsptoBody(input: SearchInput): Json {
 export function buildEpoQuery(input: SearchInput): string {
   const parts: string[] = [];
   const keywords = sanitizeWords(input.keywords);
-  if (keywords.length) parts.push(`ta all "${keywords.join(" ")}"`);
+  if (keywords.length) parts.push(`ta ${input.keywordMatch === "any" ? "any" : "all"} "${keywords.join(" ")}"`);
   const claims = sanitizeWords(input.claims);
   if (claims.length) parts.push(`cl all "${claims.join(" ")}"`);
   if (input.cpc) {
@@ -711,24 +751,47 @@ export class PatentService {
       throw new PatentInputError("Describe the idea in a sentence with at least two distinctive words.");
     }
     const cap = clampLimit(limit);
-    const primary = terms.slice(0, 4);
-    let result = await this.search({ keywords: primary.join(" "), limit: cap });
-    const retryCount = primary.length >= 4 ? 3 : primary.length === 3 ? 2 : 0;
-    if (!result.patents.length && retryCount) {
-      const retry = await this.search({ keywords: terms.slice(0, retryCount).join(" "), limit: cap });
-      const warnings = [...result.warnings];
-      for (const warning of retry.warnings) if (!warnings.includes(warning)) warnings.push(warning);
-      result = { ...retry, warnings };
+    this.requireSource();
+    const warnings: string[] = [];
+    const sources: string[] = [];
+    const lists: PatentRecord[][] = [];
+    const remember = (message: string) => {
+      if (message && !warnings.includes(message)) warnings.push(message);
+    };
+    // The file-wrapper index sorts by filing date. ANDing every keyword forced
+    // each one into the same title and ordinary descriptions matched nothing.
+    // One title search per keyword admits any hit; overlap ranking then keeps
+    // the records that share the most words with the description.
+    if (this.configured().uspto) {
+      sources.push("USPTO Open Data Portal");
+      const batches = await Promise.all(terms.map(async (term) => {
+        try {
+          return await this.usptoSearch({
+            keywords: term,
+            limit: 25,
+            keywordMatch: "any",
+            keywordField: "applicationMetaData.inventionTitle"
+          });
+        } catch (error) {
+          remember(error instanceof Error ? error.message : "USPTO search failed.");
+          return null;
+        }
+      }));
+      for (const batch of batches) if (batch) lists.push(batch);
     }
-    if (!result.patents.length && !result.warnings.length) {
-      result = { ...result, warnings: ["No office returned records for those terms."] };
+    if (this.configured().epo) {
+      sources.push("EPO Open Patent Services");
+      try {
+        lists.push(await this.epoSearch({ keywords: terms.join(" "), limit: 25, keywordMatch: "any" }));
+      } catch (error) {
+        remember(error instanceof Error ? error.message : "EPO search failed.");
+      }
     }
-    const ranked = [...result.patents]
-      .map((patent) => ({ ...patent, keywordOverlap: overlapScore(terms, patent) }))
-      .sort((a, b) => (b.keywordOverlap ?? 0) - (a.keywordOverlap ?? 0) || (a.patentNumber ?? "").localeCompare(b.patentNumber ?? ""));
+    if (!lists.length && warnings.length) throw new PatentSourceError(warnings.join(" "));
+    const ranked = rankByKeywordOverlap(terms, mergePatents(lists)).slice(0, cap);
+    if (!ranked.length && !warnings.length) warnings.push("No office returned records for those terms.");
     return {
-      ...result,
-      patents: ranked,
+      ...envelope(ranked, warnings, sources),
       queryTerms: terms,
       rankingNote: "keywordOverlap counts idea words found in title or abstract text returned by the office. It is not a legal similarity opinion. Every number was copied from an office response."
     };

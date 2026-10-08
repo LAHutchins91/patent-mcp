@@ -9,9 +9,11 @@ import {
   numbersInRecords,
   overlapScore,
   parseUsptoGrantXml,
+  PatentInputError,
   PatentService,
   PatentSourceError,
-  publicationId
+  publicationId,
+  rankByKeywordOverlap
 } from "../src/patents.js";
 import { grounded, usptoSample } from "./fixtures.js";
 
@@ -49,11 +51,27 @@ describe("patent office mapping", () => {
 
   it("builds office queries without dropping the caller's dates", () => {
     const uspto = buildUsptoBody({ keywords: "nucleotide sequencing", cpc: "C12Q", assignee: "Pacific Biosciences", dateFrom: "2020-01-01", limit: 5 });
-    expect(uspto.q).toContain("nucleotide");
+    expect(uspto.q).toContain("(nucleotide) AND (sequencing)");
+    expect(uspto.q).not.toContain(" OR ");
     expect(uspto.q).toContain("C12Q");
     expect(uspto.q).toContain("Pacific");
     expect(uspto.pagination).toEqual({ offset: 0, limit: 5 });
     expect(buildEpoQuery({ claims: "nucleic acid sequencing", inventor: "SEBO", dateTo: "2024-06-04" })).toContain("cl all");
+    expect(buildEpoQuery({ keywords: "pet water bowl" })).toBe('ta all "pet water bowl"');
+  });
+
+  it("builds a prior-art query that matches any keyword", () => {
+    const uspto = buildUsptoBody({
+      keywords: "water weighs smart track bowl",
+      keywordMatch: "any",
+      keywordField: "applicationMetaData.inventionTitle",
+      limit: 25
+    });
+    expect(uspto.q).toBe("applicationMetaData.inventionTitle:((water) OR (weighs) OR (smart) OR (track) OR (bowl))");
+    expect(uspto.q).not.toContain(" AND ");
+    expect(buildUsptoBody({ keywords: "bowl", keywordMatch: "any", keywordField: "applicationMetaData.inventionTitle" }).q)
+      .toBe("applicationMetaData.inventionTitle:(bowl)");
+    expect(buildEpoQuery({ keywords: "pet water bowl", keywordMatch: "any" })).toBe('ta any "pet water bowl"');
   });
 
   it("ranks returned patents by words the office text actually contains", () => {
@@ -65,12 +83,50 @@ describe("patent office mapping", () => {
   });
 
   it("drops common verbs and stopwords from an idea", () => {
-    expect(keywordsFromIdea("a porous separator that keeps battery electrodes apart").slice(0, 4)).toEqual([
-      "electrodes",
+    expect(keywordsFromIdea("a porous separator that keeps battery electrodes apart")).toEqual([
+      "porous",
       "separator",
       "battery",
-      "porous"
+      "electrodes"
     ]);
+  });
+
+  it("keeps short content words and reads past a long stopword preface", () => {
+    const idea = "A smart pet water bowl that weighs the water to track how much a dog or cat drinks each day and sends an alert to the owner's phone if intake drops suddenly.";
+    expect(keywordsFromIdea(idea)).toEqual(["water", "smart", "pet", "bowl", "weighs", "track", "dog", "cat"]);
+    const preface = "the and for with that this those about their device system method should really have something ".repeat(40);
+    expect(keywordsFromIdea(`${preface} graphene aerogel battery separator`)).toEqual([
+      "graphene",
+      "aerogel",
+      "battery",
+      "separator"
+    ]);
+    expect(keywordsFromIdea("smart, pet-water bowl!!! (dogs/cats)")).toEqual(["smart", "pet", "water", "bowl", "dogs", "cats"]);
+    expect(keywordsFromIdea("")).toEqual([]);
+    expect(keywordsFromIdea("   !!! ??? ... ###")).toEqual([]);
+    expect(keywordsFromIdea("the and for with that this those how should something")).toEqual([]);
+    expect(keywordsFromIdea(`${"battery ".repeat(80)}`)).toEqual(["battery"]);
+  });
+
+  it("ranks titles with more keyword hits first and ignores substrings", () => {
+    const terms = ["smart", "pet", "water", "bowl"];
+    const ranked = rankByKeywordOverlap(terms, [
+      { title: "Municipal water", patentNumber: "1", abstract: "pipes" },
+      { title: "Pet bowl", patentNumber: "2" },
+      { title: "Smart pet water bowl", patentNumber: "3" },
+      { title: "Catalyst for carpet cleaning", patentNumber: "4" }
+    ]);
+    expect(ranked.map((patent) => patent.patentNumber)).toEqual(["3", "2", "1", "4"]);
+    expect(ranked.map((patent) => patent.keywordOverlap)).toEqual([8, 4, 2, 0]);
+    expect(overlapScore(["water"], { title: "Waterproof case", abstract: "water" })).toBe(1);
+    expect(overlapScore(["water"], { title: "Water bottle" })).toBe(2);
+    expect(overlapScore(["bowl", "track", "cat"], { title: "Tracking bowls for cats" })).toBe(6);
+    expect(overlapScore(["cat", "pet"], { title: "Catalyst petroleum" })).toBe(0);
+    const tied = rankByKeywordOverlap(["water"], [
+      { title: "Water filter", patentNumber: "US200" },
+      { title: "Water pump", patentNumber: "US100" }
+    ]);
+    expect(tied.map((patent) => patent.patentNumber)).toEqual(["US100", "US200"]);
   });
 
   it("says a non-US number needs EPO credentials when they are missing", async () => {
@@ -94,24 +150,68 @@ describe("patent office mapping", () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it("retries prior art with the longest terms when USPTO returns 404", async () => {
+  it("searches each prior-art keyword on its own and ranks the office hits", async () => {
     const queries: string[] = [];
+    const idea = "A smart pet water bowl that weighs the water to track how much a dog or cat drinks each day and sends an alert to the owner's phone if intake drops suddenly.";
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { q?: string; pagination?: { limit?: number } };
+      const query = body.q ?? "";
+      queries.push(query);
+      expect(body.pagination?.limit).toBe(25);
+      const hit = (title: string, applicationNumber: string, patentNumber: string) => ({
+        patentFileWrapperDataBag: [{
+          applicationNumberText: applicationNumber,
+          applicationMetaData: { inventionTitle: title, patentNumber }
+        }]
+      });
+      if (query.includes("(bowl)")) return Response.json(hit("Smart pet water bowl", "300", "300"));
+      if (query.includes("(water)")) return Response.json(hit("Municipal water treatment", "100", "100"));
+      if (query.includes("(cat)")) return Response.json(hit("Catalyst carrier", "200", "200"));
+      return Response.json({ patentFileWrapperDataBag: [] });
+    };
+    const service = new PatentService({ fetchImpl, usptoApiKey: "test-key" });
+    const result = await service.priorArt(idea, 2);
+    expect(queries.join("\n")).not.toContain(" AND ");
+    for (const term of result.queryTerms) {
+      expect(queries).toContain(`applicationMetaData.inventionTitle:(${term})`);
+    }
+    expect(result.queryTerms).toEqual(["water", "smart", "pet", "bowl", "weighs", "track", "dog", "cat"]);
+    expect(result.patents.map((patent) => patent.patentNumber)).toEqual(["300", "100"]);
+    expect(result.patents[0].keywordOverlap).toBeGreaterThan(result.patents[1].keywordOverlap ?? 0);
+    expect(result.warnings).toEqual([]);
+    const all = await service.priorArt(idea, 5);
+    expect(all.patents.map((patent) => patent.patentNumber)).toEqual(["300", "100", "200"]);
+    expect(all.patents[2].keywordOverlap).toBe(0);
+    expect(all.patents).toHaveLength(3);
+  });
+
+  it("keeps prior-art hits when one keyword search fails", async () => {
     const fetchImpl: typeof fetch = async (_input, init) => {
       const query = (JSON.parse(String(init?.body ?? "{}")) as { q?: string }).q ?? "";
-      queries.push(query);
-      if (query.includes("(porous)")) return new Response("missing", { status: 404 });
+      if (query.includes("(porous)")) return new Response("nope", { status: 500 });
+      if (query.includes("(battery)")) return new Response("missing", { status: 404 });
       return Response.json(usptoSample);
     };
     const service = new PatentService({ fetchImpl, usptoApiKey: "test-key" });
     const result = await service.priorArt("a porous separator that keeps battery electrodes apart");
-    expect(queries[0]).toContain("(electrodes) AND (separator) AND (battery) AND (porous)");
-    expect(queries[0]).not.toContain("keeps");
-    expect(queries[0]).not.toContain("apart");
-    expect(queries[1]).toBe("(electrodes) AND (separator) AND (battery)");
     expect(result.patents.length).toBeGreaterThan(0);
-    expect(result.warnings.join(" ")).not.toMatch(/404/);
+    expect(result.warnings).toEqual(["USPTO Open Data Portal returned 500."]);
     expect(result.queryTerms).not.toContain("keeps");
     expect(result.queryTerms).not.toContain("apart");
+  });
+
+  it("does not search or invent records when the description has no distinctive words", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return Response.json({ patentFileWrapperDataBag: [] });
+    };
+    const service = new PatentService({ fetchImpl, usptoApiKey: "test-key" });
+    await expect(service.priorArt("")).rejects.toBeInstanceOf(PatentInputError);
+    await expect(service.priorArt("!!!! ???? .... ####")).rejects.toBeInstanceOf(PatentInputError);
+    await expect(service.priorArt("the and for with that this those how should something")).rejects.toBeInstanceOf(PatentInputError);
+    await expect(service.priorArt(`${"battery ".repeat(40)}`)).rejects.toBeInstanceOf(PatentInputError);
+    expect(calls).toBe(0);
   });
 
   it("returns an empty prior-art list and a warning when USPTO search stays 404", async () => {
