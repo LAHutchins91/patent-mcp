@@ -6,8 +6,8 @@ import express, { type Request, type Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { DISCLAIMER, SERVICE_NAME, VERSION } from "./disclaimer.js";
-import { authorizePage, connectPage, escapeHtml, homePage } from "./pages.js";
+import { DISCLAIMER, PRODUCT_NAME, SERVICE_NAME, VERSION } from "./disclaimer.js";
+import { authorizePage, connectPage, escapeHtml, homePage, privacyPage, supportPage, termsPage } from "./pages.js";
 import { PatentService } from "./patents.js";
 import {
   accountHasAccess,
@@ -81,6 +81,28 @@ function authSecret(env: NodeJS.ProcessEnv): string {
   return env.AUTH_SECRET || ephemeralSecret;
 }
 
+function reviewerLoginEmail(env: NodeJS.ProcessEnv): string {
+  return (env.REVIEWER_LOGIN_EMAIL ?? "").trim().toLowerCase();
+}
+
+/** `scrypt:<base64url salt>:<base64url hash>` from Node scrypt(password, salt, 32). */
+function parseReviewerPasswordHash(value: string | undefined): { salt: string; hash: string } | undefined {
+  const match = /^scrypt:([A-Za-z0-9_-]{8,128}):([A-Za-z0-9_-]{16,256})$/.exec((value ?? "").trim());
+  if (!match) return undefined;
+  return { salt: match[1], hash: match[2] };
+}
+
+function compedEmails(env: NodeJS.ProcessEnv): Set<string> {
+  const emails = new Set<string>();
+  for (const part of (env.COMP_ACCOUNT_EMAILS ?? "").split(",")) {
+    const email = part.trim().toLowerCase();
+    if (email.includes("@") && !email.includes(" ")) emails.add(email);
+  }
+  const reviewer = reviewerLoginEmail(env);
+  if (reviewer.includes("@") && !reviewer.includes(" ")) emails.add(reviewer);
+  return emails;
+}
+
 function originAllowed(origin: string | undefined, appOrigin: string): boolean {
   if (!origin) return true;
   if (origin === appOrigin) return true;
@@ -146,7 +168,7 @@ function wantsJson(req: Request): boolean {
 function fail(req: Request, res: Response, status: number, message: string) {
   if (wantsJson(req)) return res.status(status).json({ error: message });
   const back = safeReturn(req.body?.returnTo);
-  return res.status(status).type("html").send(`<!doctype html><meta charset="utf-8"><title>Patent by Ouroboros</title><p>${escapeHtml(message)}</p><p><a href="${escapeHtml(back)}">Back</a></p>`);
+  return res.status(status).type("html").send(`<!doctype html><meta charset="utf-8"><title>${escapeHtml(PRODUCT_NAME)}</title><p>${escapeHtml(message)}</p><p><a href="${escapeHtml(back)}">Back</a></p>`);
 }
 
 function validRedirect(uri: string): boolean {
@@ -176,7 +198,7 @@ function basicClient(req: Request): { id?: string; secret?: string } {
 function resourceMetadata(origin: string) {
   return {
     resource: `${origin}/mcp`,
-    resource_name: "Patent by Ouroboros",
+    resource_name: PRODUCT_NAME,
     authorization_servers: [origin],
     scopes_supported: ["patent:read"],
     bearer_methods_supported: ["header"],
@@ -267,7 +289,7 @@ export function createApp(options: AppOptions = {}) {
     res.json({
       ok: true,
       service: SERVICE_NAME,
-      name: "Patent by Ouroboros",
+      name: PRODUCT_NAME,
       version: VERSION,
       billingConfigured: billingConfigured(env),
       stripeWebhookConfigured: Boolean(env.STRIPE_WEBHOOK_SECRET),
@@ -346,6 +368,7 @@ export function createApp(options: AppOptions = {}) {
       origin: originOf(req, env),
       user,
       now: nowFn(),
+      comped: Boolean(user && compedEmails(env).has(user.email.toLowerCase())),
       notice: checkout === "success" ? "Checkout completed. Subscription status updates when Stripe notifies this server." : undefined,
       error: checkout === "cancelled" ? "Checkout was cancelled. No changes were made." : undefined
     }));
@@ -353,6 +376,18 @@ export function createApp(options: AppOptions = {}) {
 
   app.get("/connect", (req, res) => {
     res.type("html").send(connectPage(originOf(req, env)));
+  });
+
+  app.get("/privacy", (req, res) => {
+    res.type("html").send(privacyPage(originOf(req, env)));
+  });
+
+  app.get("/terms", (req, res) => {
+    res.type("html").send(termsPage(originOf(req, env)));
+  });
+
+  app.get("/support", (req, res) => {
+    res.type("html").send(supportPage(originOf(req, env)));
   });
 
   app.post("/register", async (req, res) => {
@@ -521,6 +556,9 @@ export function createApp(options: AppOptions = {}) {
     }).safeParse(req.body);
     if (!parsed.success) return fail(req, res, 400, "Use a valid email and a password of at least 10 characters.");
     const email = parsed.data.email.toLowerCase();
+    if (reviewerLoginEmail(env) && email === reviewerLoginEmail(env)) {
+      return fail(req, res, 409, "An account with that email already exists.");
+    }
     const existing = (await store.read()).users.find((user) => user.email === email);
     if (existing) return fail(req, res, 409, "An account with that email already exists.");
     const password = await hashSecret(parsed.data.password);
@@ -550,6 +588,46 @@ export function createApp(options: AppOptions = {}) {
     }).safeParse(req.body);
     if (!parsed.success) return fail(req, res, 400, "Email or password is incorrect.");
     const email = parsed.data.email.toLowerCase();
+    const reviewerEmail = reviewerLoginEmail(env);
+    if (reviewerEmail && email === reviewerEmail) {
+      const hashed = parseReviewerPasswordHash(env.REVIEWER_LOGIN_PASSWORD_HASH);
+      const match = hashed ? await verifySecret(parsed.data.password, hashed.hash, hashed.salt) : false;
+      if (!hashed || !match) return fail(req, res, 401, "Email or password is incorrect.");
+      let userId = (await store.read()).users.find((item) => item.email === email)?.id;
+      if (!userId) {
+        userId = `user_${randomBytes(12).toString("base64url")}`;
+        const created = nowFn();
+        const id = userId;
+        await store.update((draft) => {
+          const current = draft.users.find((item) => item.email === email);
+          if (current) {
+            current.passwordHash = hashed.hash;
+            current.passwordSalt = hashed.salt;
+            return;
+          }
+          draft.users.push({
+            id,
+            email,
+            passwordHash: hashed.hash,
+            passwordSalt: hashed.salt,
+            createdAt: created.toISOString(),
+            trialEndsAt: new Date(created.getTime() - 1000).toISOString()
+          });
+        });
+        userId = (await store.read()).users.find((item) => item.email === email)?.id ?? id;
+      } else {
+        const id = userId;
+        await store.update((draft) => {
+          const current = draft.users.find((item) => item.id === id);
+          if (!current) return;
+          current.passwordHash = hashed.hash;
+          current.passwordSalt = hashed.salt;
+        });
+      }
+      setSession(res, userId, authSecret(env), originOf(req, env).startsWith("https:"), nowFn().getTime());
+      if (req.is("json")) return res.json({ id: userId });
+      return res.redirect(safeReturn(parsed.data.returnTo));
+    }
     const user = (await store.read()).users.find((item) => item.email === email);
     const dummy = user ?? { passwordHash: "x".repeat(43), passwordSalt: "salt" };
     const match = user ? await verifySecret(parsed.data.password, user.passwordHash, user.passwordSalt) : await verifySecret(parsed.data.password, dummy.passwordHash, dummy.passwordSalt).then(() => false);
@@ -628,7 +706,7 @@ export function createApp(options: AppOptions = {}) {
   app.get("/mcp", (req, res) => {
     if (!guardMcp(req, res)) return;
     res.set("WWW-Authenticate", `Bearer resource_metadata="${originOf(req, env)}/.well-known/oauth-protected-resource/mcp"`);
-    res.status(401).json({ error: "Use Streamable HTTP POST with your Patent connection." });
+    res.status(401).json({ error: `Use Streamable HTTP POST with your ${PRODUCT_NAME} connection.` });
   });
 
   app.post("/mcp", async (req, res) => {
@@ -644,9 +722,9 @@ export function createApp(options: AppOptions = {}) {
       const resource = `${originOf(req, env)}/mcp`;
       if (!record || !user || (record.resource && record.resource !== resource)) {
         res.set("WWW-Authenticate", `Bearer resource_metadata="${originOf(req, env)}/.well-known/oauth-protected-resource/mcp"`);
-        return res.status(401).json({ error: "Sign in to Patent by Ouroboros to use patent tools." });
+        return res.status(401).json({ error: `Sign in to ${PRODUCT_NAME} to use patent tools.` });
       }
-      if (!accountHasAccess(user, nowFn())) {
+      if (!compedEmails(env).has(user.email.toLowerCase()) && !accountHasAccess(user, nowFn())) {
         return res.status(403).json({
           error: "An active trial or Pro subscription is required.",
           access_information: `${originOf(req, env)}/#plans`
@@ -655,8 +733,8 @@ export function createApp(options: AppOptions = {}) {
     }
     try {
       const server = new McpServer({
-        name: SERVICE_NAME,
-        title: "Patent by Ouroboros",
+        name: PRODUCT_NAME,
+        title: PRODUCT_NAME,
         version: VERSION,
         description: DISCLAIMER,
         icons: [{ src: `${originOf(req, env)}/logo.jpg`, mimeType: "image/jpeg", sizes: ["1024x1024"], theme: "dark" }]
@@ -740,7 +818,7 @@ function oauthQuery(req: Request): { ok: true; value: Record<string, string> } |
   if (!value.client_id || !value.redirect_uri || !value.code_challenge || !value.state) return { ok: false, error: "client_id, redirect_uri, state, and code_challenge are required." };
   if (value.code_challenge_method !== "S256") return { ok: false, error: "PKCE S256 is required." };
   if (!validRedirect(value.redirect_uri)) return { ok: false, error: "Return address must be https, or http on localhost." };
-  if (value.resource && !value.resource.endsWith("/mcp")) return { ok: false, error: "Resource must be the Patent MCP endpoint." };
+  if (value.resource && !value.resource.endsWith("/mcp")) return { ok: false, error: `Resource must be the ${PRODUCT_NAME} endpoint.` };
   return { ok: true, value };
 }
 
@@ -749,6 +827,6 @@ export const app = createApp();
 const port = Number(process.env.PORT ?? 8787);
 if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) {
   app.listen(port, "0.0.0.0", () => {
-    console.log(`Patent by Ouroboros listening on ${port}`);
+    console.log(`${PRODUCT_NAME} listening on ${port}`);
   });
 }
