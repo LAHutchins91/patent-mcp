@@ -1,6 +1,6 @@
-# Patent by Ouroboros Apps
+# Patent by Ouroboros
 
-Patent by Ouroboros Apps is a remote MCP server for inventors, startup founders, patent agents and attorneys, and engineers who need to check whether an idea already appears in the public patent record.
+Patent by Ouroboros is a remote MCP server for inventors, startup founders, patent agents and attorneys, and engineers who need to check whether an idea already appears in the public patent record.
 
 It searches United States patent records on the USPTO Open Data Portal. Google Patents is used only as a link. Every patent number in a tool result is copied from a USPTO response. The server does not fill in numbers when USPTO does not answer.
 
@@ -8,15 +8,17 @@ It searches United States patent records on the USPTO Open Data Portal. Google P
 
 ## Hosted server
 
-- MCP server URL: `https://patent-mcp.vercel.app/mcp` (Streamable HTTP, OAuth sign-in)
+- MCP server URL: `https://patent-mcp.vercel.app/mcp` (live, Streamable HTTP, OAuth sign-in)
+- Health: https://patent-mcp.vercel.app/health
+- Protected-resource metadata: https://patent-mcp.vercel.app/.well-known/oauth-protected-resource
+- Connect guide: https://patent-mcp.vercel.app/connect
 - Docs: https://ouroborosapps.com/docs/patent
-- Status: early access. Paste the URL into Claude, Cursor, Grok, or ChatGPT developer mode.
 - Coverage on the hosted server: United States patents from the USPTO Open Data Portal.
 - Registry name: `io.github.LAHutchins91/patent`
 
 ## Connect
 
-The MCP address is your deployment origin plus `/mcp`. Locally that is `http://127.0.0.1:8787/mcp`.
+The hosted MCP address is `https://patent-mcp.vercel.app/mcp`. A self-hosted copy uses its own origin plus `/mcp`. Locally that is `http://127.0.0.1:8787/mcp`.
 
 Sign in when the assistant opens OAuth. Leave the client id and secret empty. The server supports OAuth 2.1 dynamic client registration and PKCE (S256). Do not paste a password or an office API key into the assistant.
 
@@ -26,7 +28,7 @@ Cursor, in `~/.cursor/mcp.json` or a project `.cursor/mcp.json`:
 {
   "mcpServers": {
     "patent": {
-      "url": "http://127.0.0.1:8787/mcp"
+      "url": "https://patent-mcp.vercel.app/mcp"
     }
   }
 }
@@ -35,14 +37,14 @@ Cursor, in `~/.cursor/mcp.json` or a project `.cursor/mcp.json`:
 Claude Code:
 
 ```bash
-claude mcp add --transport http patent http://127.0.0.1:8787/mcp
+claude mcp add --transport http patent https://patent-mcp.vercel.app/mcp
 ```
 
 ChatGPT, Claude, Gemini, Grok, and any other Streamable HTTP client: add the same URL, choose OAuth, and leave client id and secret blank. Full steps are on `/connect`.
 
 A new account includes 14 days of search access. After the trial, Pro continues through Stripe Checkout. The amount is shown by Stripe, not in this repository.
 
-`server.json` is the MCP Registry manifest (`io.github.LAHutchins91/patent`). Its icon is `https://patent-mcp.vercel.app/logo.jpg`. Before you publish the registry entry, set `remotes[0].url` and `websiteUrl` to the public origin. The file currently uses `https://patent-mcp.vercel.app/mcp` as the intended Vercel path.
+`server.json` is the MCP Registry manifest (`io.github.LAHutchins91/patent`). Its `remotes[0].url` is the hosted server, `https://patent-mcp.vercel.app/mcp`, and its icon is `https://patent-mcp.vercel.app/logo.jpg`. A self-hosted copy should point both at its own origin.
 
 ## Tools
 
@@ -127,8 +129,10 @@ docker run --env-file .env -p 8787:8787 patent-mcp
 
 ## What was verified
 
-Locally, over Streamable HTTP: `tools/list` and each of the four tools, OAuth registration with PKCE, trial expiry, Stripe checkout request shape, and webhook signature verification. The USPTO host answered without a key (unauthorized). No live Stripe charge was made, and the server was not deployed to Vercel from this workspace.
+Locally, over Streamable HTTP: `tools/list` and each of the four tools, OAuth registration with PKCE, trial expiry, Stripe checkout request shape, and webhook signature verification. No live Stripe charge was made in tests.
+
+Hosted: the server is deployed at `https://patent-mcp.vercel.app`. `tools/list` answers without a token, an unsigned tool call returns 401 with a `WWW-Authenticate` header, `/.well-known/oauth-protected-resource` returns 200, and `/health` reports the USPTO key as configured.
 
 ---
 
-More from Ouroboros: https://ouroborosapps.com
+Patent by Ouroboros. More from Ouroboros: https://ouroborosapps.com
