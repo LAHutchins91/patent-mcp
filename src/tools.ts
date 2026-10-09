@@ -3,6 +3,9 @@ import { z } from "zod";
 import { DISCLAIMER } from "./disclaimer.js";
 import { PatentInputError, PatentService, PatentSourceError } from "./patents.js";
 
+// Explicit booleans for every hint, matching the other Ouroboros apps. All four tools only read public USPTO data.
+const readOnlyAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
+
 const optionalText = (max: number) => z.string().trim().max(max).optional();
 
 function blankToUndefined(value: string | undefined): string | undefined {
@@ -37,7 +40,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
     {
       title: "Search patents",
       description: "Search public US patent records by keywords, claim language, CPC class, assignee, inventor, or grant date. Every number in the result was returned by USPTO. Not legal advice.",
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: readOnlyAnnotations,
       inputSchema: {
         keywords: optionalText(400).describe("Words to find in the application or title and abstract."),
         claims: optionalText(2000).describe("Claim language. USPTO matches these words across the file wrapper."),
@@ -66,7 +69,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
     {
       title: "Get patent details",
       description: "Fetch one US patent's title, abstract, claims, status, family, and citations from USPTO. Missing text is omitted rather than filled in. Not legal advice.",
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: readOnlyAnnotations,
       inputSchema: {
         patentNumber: z.string().trim().min(4).max(32).describe("US patent or publication number, such as US10000000 or 10000000.")
       }
@@ -79,7 +82,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
     {
       title: "Find citing and cited patents",
       description: "List documents cited by a US patent and documents that cite it, using USPTO grant references and USPTO office-action citations. The PatentsView citation graph is paused. Not legal advice.",
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: readOnlyAnnotations,
       inputSchema: {
         patentNumber: z.string().trim().min(4).max(32).describe("Patent or publication number."),
         direction: z.enum(["citing", "cited_by", "both"]).optional().describe("citing: documents that cite this patent. cited_by: documents this patent cites. both is the default.")
@@ -97,7 +100,7 @@ export function registerPatentTools(server: McpServer, service: PatentService) {
     {
       title: "Search prior art",
       description: "Turn an idea description into a public-patent search and return the closest records the offices actually returned, with Google Patents links. Ranking counts overlapping words. It is not a patentability opinion. Not legal advice.",
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: readOnlyAnnotations,
       inputSchema: {
         idea: z.string().trim().min(20).max(4000).describe("What the invention is, in plain language."),
         limit: z.number().int().min(1).max(25).optional().describe("Maximum patents to return.")

@@ -225,7 +225,11 @@ describe("Streamable HTTP tools", () => {
       expect(before, tool.name).toBeDefined();
       expect(tool.title).toEqual(before?.title);
       expect(tool.inputSchema).toEqual(before?.inputSchema);
-      expect(tool.annotations).toEqual(before?.annotations);
+      expect(tool.annotations).toEqual({ ...(before?.annotations as object), destructiveHint: false, idempotentHint: true });
+      expect(tool.annotations).toStrictEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+      for (const hint of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"]) {
+        expect(typeof (tool.annotations as Record<string, unknown>)[hint], `${tool.name}.${hint}`).toBe("boolean");
+      }
       expect(tool.execution).toEqual(before?.execution);
       if (changed.has(tool.name)) {
         expect(tool.description).not.toEqual(before?.description);
