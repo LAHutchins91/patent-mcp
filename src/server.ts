@@ -243,6 +243,51 @@ async function stripeForm(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch, pathN
   return JSON.parse(text) as { id?: string; url?: string };
 }
 
+/** Stamped on every Patent checkout session and subscription. The Stripe account is shared with other apps. */
+export const PATENT_APP = "patent";
+
+function metadataOf(object: Record<string, unknown>): Record<string, unknown> {
+  return object.metadata && typeof object.metadata === "object" ? object.metadata as Record<string, unknown> : {};
+}
+
+function isPatentMarked(object: Record<string, unknown>): boolean {
+  return metadataOf(object).app === PATENT_APP;
+}
+
+/** Every price id on a subscription (items.data[].price as a string or an object). */
+export function subscriptionPriceIds(object: Record<string, unknown>): string[] {
+  const items = object.items && typeof object.items === "object" ? object.items as { data?: unknown } : {};
+  const data = Array.isArray(items.data) ? items.data : [];
+  return data.map((item) => {
+    const price = item && typeof item === "object" ? (item as { price?: unknown }).price : undefined;
+    if (typeof price === "string") return price;
+    if (price && typeof price === "object" && typeof (price as { id?: unknown }).id === "string") return (price as { id: string }).id;
+    return "";
+  });
+}
+
+/**
+ * The Patent user an event belongs to, or null when the event is not provably Patent's.
+ * Every app on the shared Stripe account receives every event. Checkout needs metadata.app=patent and
+ * metadata.user_id; subscription events need every item price to be a Patent price plus metadata.user_id.
+ * client_reference_id alone is never trusted.
+ */
+export function patentEventUser(event: { type: string; data: { object: Record<string, unknown> } }, env: NodeJS.ProcessEnv): { userId: string; subscription: boolean } | null {
+  const object = event.data.object;
+  const userId = metadataOf(object).user_id;
+  if (typeof userId !== "string" || !userId) return null;
+  if (event.type === "checkout.session.completed") {
+    return isPatentMarked(object) ? { userId, subscription: false } : null;
+  }
+  if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
+    const allowed = [env.STRIPE_PRICE_MONTHLY ?? "", env.STRIPE_PRICE_YEARLY ?? ""].map((price) => price.trim()).filter(Boolean);
+    const prices = subscriptionPriceIds(object);
+    if (!allowed.length || !prices.length || !prices.every((price) => allowed.includes(price))) return null;
+    return { userId, subscription: true };
+  }
+  return null;
+}
+
 function stripeEvent(rawBody: Buffer, signatureHeader: string, secret: string): { type: string; data: { object: Record<string, unknown> } } {
   const fields = signatureHeader.split(",").map((part) => part.trim());
   const timestamp = fields.find((part) => part.startsWith("t="))?.slice(2);
@@ -316,21 +361,20 @@ export function createApp(options: AppOptions = {}) {
       if (!signature || !Buffer.isBuffer(req.body) || !env.STRIPE_WEBHOOK_SECRET) return res.status(400).send("Missing Stripe signature");
       const event = stripeEvent(req.body, signature, env.STRIPE_WEBHOOK_SECRET);
       const object = event.data.object;
-      const metadata = (object.metadata ?? {}) as Record<string, unknown>;
-      const userId = typeof metadata.user_id === "string"
-        ? metadata.user_id
-        : typeof object.client_reference_id === "string"
-          ? object.client_reference_id
-          : undefined;
-      if (userId && (event.type === "checkout.session.completed" || event.type.startsWith("customer.subscription."))) {
+      const target = patentEventUser(event, env);
+      if (target) {
+        const { userId, subscription } = target;
         const status = typeof object.status === "string" ? object.status : undefined;
         const periodEnd = typeof object.current_period_end === "number" ? new Date(object.current_period_end * 1000).toISOString() : undefined;
+        const marked = isPatentMarked(object);
         await store.update((draft) => {
           const user = draft.users.find((item) => item.id === userId);
           if (!user) return;
+          // Subscriptions from before the app marker must belong to the customer we already stored.
+          if (subscription && !marked && user.stripeCustomerId && object.customer !== user.stripeCustomerId) return;
           if (typeof object.customer === "string") user.stripeCustomerId = object.customer;
-          if (event.type === "checkout.session.completed" && typeof object.subscription === "string") user.stripeSubscriptionId = object.subscription;
-          if (event.type.startsWith("customer.subscription.")) {
+          if (!subscription && typeof object.subscription === "string") user.stripeSubscriptionId = object.subscription;
+          if (subscription) {
             if (typeof object.id === "string") user.stripeSubscriptionId = object.id;
             if (status) user.subscriptionStatus = status;
             if (periodEnd) user.currentPeriodEnd = periodEnd;
@@ -665,7 +709,9 @@ export function createApp(options: AppOptions = {}) {
       params.set("line_items[0][price]", price);
       params.set("line_items[0][quantity]", "1");
       params.set("client_reference_id", user.id);
+      params.set("metadata[app]", PATENT_APP);
       params.set("metadata[user_id]", user.id);
+      params.set("subscription_data[metadata][app]", PATENT_APP);
       params.set("subscription_data[metadata][user_id]", user.id);
       const remaining = Date.parse(user.trialEndsAt) - nowFn().getTime();
       if (remaining > 48 * 60 * 60 * 1000 && user.subscriptionStatus !== "active") {

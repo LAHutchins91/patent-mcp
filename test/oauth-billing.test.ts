@@ -133,12 +133,12 @@ describe("OAuth and billing", () => {
       });
     });
     const secret = "whsec_test";
-    const app = createApp({ store, env: { AUTH_SECRET: "test-auth-secret", STRIPE_WEBHOOK_SECRET: secret } });
+    const app = createApp({ store, env: { AUTH_SECRET: "test-auth-secret", STRIPE_WEBHOOK_SECRET: secret, STRIPE_PRICE_MONTHLY: "price_patent_month", STRIPE_PRICE_YEARLY: "price_patent_year" } });
     const server = await listen(app);
     try {
       const payload = JSON.stringify({
         type: "customer.subscription.updated",
-        data: { object: { id: "sub_123", customer: "cus_123", status: "active", current_period_end: 1790000000, metadata: { user_id: "user_test" } } }
+        data: { object: { id: "sub_123", customer: "cus_123", status: "active", current_period_end: 1790000000, items: { data: [{ price: { id: "price_patent_month" } }] }, metadata: { user_id: "user_test" } } }
       });
       const timestamp = Math.floor(Date.now() / 1000);
       const signature = createHmac("sha256", secret).update(`${timestamp}.${payload}`).digest("hex");
@@ -172,5 +172,80 @@ describe("OAuth and billing", () => {
     const text = await readFile(path.join(dir, "store.json"), "utf8");
     expect(text).toContain("file@example.com");
     expect((await store.read()).users).toHaveLength(1);
+  });
+});
+
+describe("shared Stripe account: Patent ignores other apps' events", () => {
+  const secret = "whsec_iso";
+  const env = { AUTH_SECRET: "test-auth-secret", STRIPE_WEBHOOK_SECRET: secret, STRIPE_PRICE_MONTHLY: "price_patent_month", STRIPE_PRICE_YEARLY: "price_patent_year" };
+  const patentItems = { data: [{ price: { id: "price_patent_month" } }] };
+
+  async function harness(user: Record<string, unknown> = {}) {
+    const store = memoryStore();
+    await store.update((draft) => {
+      draft.users.push({
+        id: "user_iso", email: "iso@example.com", passwordHash: "x", passwordSalt: "y",
+        createdAt: "2026-10-01T00:00:00Z", trialEndsAt: "2026-10-15T00:00:00Z", ...user
+      } as never);
+    });
+    const server = await listen(createApp({ store, env }));
+    const send = async (event: unknown) => {
+      const payload = JSON.stringify(event);
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = createHmac("sha256", secret).update(`${timestamp}.${payload}`).digest("hex");
+      const response = await fetch(`${server.url}/billing/webhook`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "stripe-signature": `t=${timestamp},v1=${signature}` },
+        body: payload
+      });
+      expect(response.status).toBe(200);
+      return (await store.read()).users[0];
+    };
+    return { send, close: server.close };
+  }
+
+  it("ignores another app's checkout and subscription events that reuse the same user id", async () => {
+    const { send, close } = await harness();
+    try {
+      let user = await send({ type: "checkout.session.completed", data: { object: { client_reference_id: "user_iso", customer: "cus_other", subscription: "sub_other", metadata: { user_id: "user_iso" } } } });
+      expect(user.stripeCustomerId).toBeUndefined();
+      user = await send({ type: "checkout.session.completed", data: { object: { client_reference_id: "user_iso", customer: "cus_other", subscription: "sub_other", metadata: { app: "papers", papers_user_id: "user_iso" } } } });
+      expect(user.stripeCustomerId).toBeUndefined();
+      user = await send({ type: "customer.subscription.created", data: { object: { id: "sub_other", customer: "cus_other", status: "active", items: { data: [{ price: { id: "price_desk_month" } }] }, metadata: { user_id: "user_iso" } } } });
+      expect(user.subscriptionStatus).toBeUndefined();
+      user = await send({ type: "customer.subscription.created", data: { object: { id: "sub_mix", customer: "cus_other", status: "active", items: { data: [{ price: "price_patent_month" }, { price: "price_other" }] }, metadata: { app: "patent", user_id: "user_iso" } } } });
+      expect(user.subscriptionStatus).toBeUndefined();
+      user = await send({ type: "customer.subscription.created", data: { object: { id: "sub_none", customer: "cus_other", status: "active", metadata: { app: "patent", user_id: "user_iso" } } } });
+      expect(user.subscriptionStatus).toBeUndefined();
+    } finally {
+      await close();
+    }
+  });
+
+  it("applies its own checkout and subscription lifecycle", async () => {
+    const { send, close } = await harness();
+    try {
+      let user = await send({ type: "checkout.session.completed", data: { object: { client_reference_id: "user_iso", customer: "cus_p", subscription: "sub_p", metadata: { app: "patent", user_id: "user_iso" } } } });
+      expect(user.stripeCustomerId).toBe("cus_p");
+      expect(user.stripeSubscriptionId).toBe("sub_p");
+      user = await send({ type: "customer.subscription.updated", data: { object: { id: "sub_p", customer: "cus_p", status: "active", items: patentItems, metadata: { app: "patent", user_id: "user_iso" } } } });
+      expect(user.subscriptionStatus).toBe("active");
+      user = await send({ type: "customer.subscription.deleted", data: { object: { id: "sub_p", customer: "cus_p", status: "canceled", items: { data: [{ price: "price_patent_year" }] }, metadata: { app: "patent", user_id: "user_iso" } } } });
+      expect(user.subscriptionStatus).toBe("canceled");
+    } finally {
+      await close();
+    }
+  });
+
+  it("keeps pre-marker subscriptions working only for the stored customer", async () => {
+    const { send, close } = await harness({ stripeCustomerId: "cus_old", subscriptionStatus: "active" });
+    try {
+      let user = await send({ type: "customer.subscription.deleted", data: { object: { id: "sub_x", customer: "cus_someone", status: "canceled", items: patentItems, metadata: { user_id: "user_iso" } } } });
+      expect(user.subscriptionStatus).toBe("active");
+      user = await send({ type: "customer.subscription.updated", data: { object: { id: "sub_old", customer: "cus_old", status: "past_due", items: patentItems, metadata: { user_id: "user_iso" } } } });
+      expect(user.subscriptionStatus).toBe("past_due");
+    } finally {
+      await close();
+    }
   });
 });
